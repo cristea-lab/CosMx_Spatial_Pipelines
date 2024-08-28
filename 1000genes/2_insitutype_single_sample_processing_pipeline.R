@@ -22,53 +22,51 @@ args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 1) {
   stop("Please provide one or more file paths as command-line arguments.")
 }
-
-# Iterate over each file path and print it (or do something else with it)
-for (file in args) {
-  print(paste("Processing file:", file))
-  # You can add your file processing code here
+if (length(args) != 8) {
+    stop("Please double check your input to make sure only 3 command-line inputs are given.")
 }
 
 
 ##################################################
 #################### INPUT #######################
 ##################################################
-
-# sample_name = "PCA429"
-# sample_folder_path = "/cristealab/ajordan/projects/BTC_analysis/data/processed/cosmx/human/resegmented_data/PCA429"
-# insitutype_reference_sig_csv_file_path = "/cristealab/ajordan/projects/BTC_analysis/data/external/insitutype_references/Pancreas.profiles.csv"
 sample_name = args[1]
-sample_folder_path = args[2]
-insitutype_reference_sig_csv_file_path = args[3]
+print(paste("Input sample name: ", sample_name))
 
-meta_data_file_path = paste0(sample_folder_path, "/", sample_name, "_metadata_file.csv")
+
+sample_folder_path = args[2]
+print(paste("Input sample folder path from AtoMx: ", sample_folder_path))
+
+output_folder_path = args[3]
+print(paste("Input output folder: ", output_folder_path))
+
+insitutype_reference_sig_csv_file_path = args[4]
+print(paste("Input inSituType ref sig profile from Nanostring: ", insitutype_reference_sig_csv_file_path))
+
+
+# num_cluster, min and max represents the lower and upper end of the range (both inclusive)
+min_num_cluster = args[5]
+print(paste("Input lower end of the num of clusters: ", min_num_cluster))
+
+max_num_cluster = args[6]
+print(paste("Input higher end of the num of clusters: ", max_num_cluster))
+
+# User input QC metrice after viewing the plot
+min_nCount_RNA = args[7] # >=
+print(paste("Input QC metrice of min nCount RNA: ", min_nCount_RNA))
+
+max_nFeature_negprobes = args[8] # <
+print(paste("Input QC metrice of max nFeature negprobes: ", max_nFeature_negprobes))
 
 
 ##################################################
 #################### OUTPUT ######################
 ##################################################
 
-# Save rds
-# output_folder_path = "/cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_08162024"
-output_folder_path = args[4]
+output_Rds_file_path = paste0(output_folder_path, "/A_1_pre_QC_sample.rds")
 
-output_Rds_file_path = paste0(output_folder_path, "/initial_sample.rds")
+post_QC_and_normalization_20_counts_per_cell_rds_file_path = paste0(output_folder_path, "/A_2_post_QC_and_normalization_20_counts_per_cell.rds")
 
-# QC
-probe_count_histogram_file_path = paste0(output_folder_path, "/", "1_1_QC_probe_count_histogram.png")
-feature_count_histogram_file_path = paste0(output_folder_path, "/", "1_2_QC_feature_count_histogram.png")
-negative_probe_count_histogram_file_path = paste0(output_folder_path, "/1_3_QC_negative_probe_count_histogram.png")
-
-post_QC_and_normalization_20_counts_per_cell_rds_file_path = paste0(output_folder_path, "/1_4_post_QC_and_normalization_20_counts_per_cell.rds")
-
-
-# InSituType
-# pancreas_nanostring_ref_file_path = "/cristealab/ajordan/projects/BTC_analysis/data/external/insitutype_references/Pancreas.profiles.csv"
-pancreas_nanostring_ref_file_path = insitutype_reference_sig_csv_file_path
-
-# num_cluster = 14
-min_num_cluster = args[5]
-max_num_cluster = args[6]
 
 
 #-----------------------------------------------------------------------------------------------------
@@ -80,94 +78,18 @@ max_num_cluster = args[6]
 
 
 #################### LOAD SAMPLE ####################
-#load sample
-seurat_obj <- LoadNanostring(
-  data.dir = sample_folder_path,
-  fov = "fov",
-  assay = "Nanostring"
-)
-
-#read in metadata to add to seurat object
-metadata <- read.csv(meta_data_file_path, header = TRUE)
-
-#withdraw original count and gene metadata from the seurat object
-original_metadata <- seurat_obj@meta.data
-  
-#create fully unified metadata prior to adding to seurat object
-metadata <- cbind(original_metadata, metadata)
-
-#add metadata to seurat object
-seurat_obj@meta.data <- metadata
-
+seurat_obj = readRDS(output_Rds_file_path)
 
 #######################################################
 #################### PREPROCESSING ####################
 #######################################################
-#create function to edit seurat objects
-edit_fov_column <- function(seurat_obj) {
-    seurat_obj@meta.data$global_fov <- paste(seurat_obj@meta.data$Run_Tissue_name, seurat_obj@meta.data$fov, sep = "_")
-    seurat_obj@meta.data <- seurat_obj@meta.data %>%
-        mutate(disease = "PDAC")
-    seurat_obj@meta.data <- seurat_obj@meta.data %>%
-        relocate(disease, .after=orig.ident)
-    seurat_obj@meta.data <- seurat_obj@meta.data %>%
-        rename(FOV = fov)
+meta_data_file_path = paste0(sample_folder_path, "/", sample_name, "_metadata_file.csv")
 
-    return(seurat_obj)
-}
-
-seurat_obj = edit_fov_column(seurat_obj)
-
-# Add column for the corresponding tissue name
-seurat_obj@meta.data$patient = sample_name
-
-saveRDS(seurat_obj, output_Rds_file_path)
-
-
-############################################
-#################### QC ####################
-############################################
-ggplot(seurat_obj@meta.data, aes(x=nCount_Nanostring)) + 
-  geom_histogram() +
-  theme_classic() +
-  xlab("No. of Probes Detected") +
-  ylab("No. of Cells") +
-  xlim(min = 0, max = 4500)
-ggsave(probe_count_histogram_file_path)
-
-ggplot(seurat_obj@meta.data, aes(x=nFeature_Nanostring)) + 
-  geom_histogram() +
-  theme_classic() +
-  xlab("No. of Genes Detected") +
-  ylab("No. of Cells")
-ggsave(feature_count_histogram_file_path)
-
-ggplot(seurat_obj@meta.data, aes(x=nCount_negprobes)) + 
-  geom_histogram() +
-  theme_classic() +
-  xlab("No. of Negative Probes Detected") +
-  ylab("No. of Cells")
-ggsave(negative_probe_count_histogram_file_path)
-
-
-# ggplot(seurat_obj@meta.data,aes(x=Run_Tissue_name, y=nCount_Nanostring, fill = Run_Tissue_name)) +
-#   geom_boxplot(width = 0.2) +
-#   theme_classic()
-
-# ggplot(seurat_obj@meta.data,aes(x=Run_Tissue_name, y=nFeature_Nanostring, fill = Run_Tissue_name)) +
-#   geom_boxplot(width = 0.2) +
-#   theme_classic()
-
-# ggplot(seurat_obj@meta.data,aes(x=patient, y=nCount_Nanostring, fill = patient)) +
-#   geom_boxplot(width = 0.2) +
-#   theme_classic()
-
-# ggplot(seurat_obj@meta.data,aes(x=patient, y=nFeature_Nanostring, fill = patient)) +
-#   geom_boxplot(width = 0.2) +
-#   theme_classic()
+# InSituType reference profile from Nanostring 
+pancreas_nanostring_ref_file_path = insitutype_reference_sig_csv_file_path
 
 # remove cells with less than 50 counts and 1 or more negative probe detected
-seurat_obj <- subset(seurat_obj, subset = nCount_RNA >= 20 & nFeature_negprobes < 0.5)
+seurat_obj <- subset(seurat_obj, subset = nCount_RNA >= min_nCount_RNA & nFeature_negprobes < max_nFeature_negprobes)
 
 # remove all negative and falsecode probes
 seurat_obj <- subset(seurat_obj, features = rownames(seurat_obj@assays[["Nanostring"]])[!grepl("SystemControl|Negative", rownames(seurat_obj@assays[["Nanostring"]]))])
@@ -177,8 +99,6 @@ seurat_obj_norm <- NormalizeData(seurat_obj)
 seurat_obj_norm <- JoinLayers(seurat_obj_norm)
 
 saveRDS(seurat_obj_norm, post_QC_and_normalization_20_counts_per_cell_rds_file_path)
-
-
 
 
 ####################################################
@@ -232,7 +152,7 @@ mif_cohort <- fastCohorting(mif_data, gaussian_transform = TRUE)
 #set random seed
 set.seed(123)
 
-
+# Given the range of cluster, run through all the number of clusters
 for (num_cluster in min_num_cluster:max_num_cluster) {
   print(paste0("Running inSituType clustering analysis: ", num_cluster, " number of clusters"))
 
@@ -245,11 +165,11 @@ for (num_cluster in min_num_cluster:max_num_cluster) {
   flightpath_initial_cluster_file_path = paste0(cluster_output_folder_path, "/2_1_flightpath_initial_cluster.png")
   flightpath_new_cluster_file_path = paste0(cluster_output_folder_path, "/2_2_flightpath_new_cluster.png")
 
-  semi_sup_insitutype_refined_rds_file_path = paste0(cluster_output_folder_path, "/semi_sup_insitutype_refined.rds")
+  semi_sup_insitutype_refined_rds_file_path = paste0(cluster_output_folder_path, "/B_1_semi_sup_insitutype_refined.rds")
 
   dotplot_marker_genes_file_path =  paste0(cluster_output_folder_path, "/2_3_dotplot_marker_genes.png")
 
-  semi_sup_insitutype_fully_labeled_rds_file_path = paste0(cluster_output_folder_path, "/semi_sup_insitutype_fully_labeled.rds")
+  semi_sup_insitutype_fully_labeled_rds_file_path = paste0(cluster_output_folder_path, "/B_2_semi_sup_insitutype_fully_labeled.rds")
 
   barplot_level_1_clusters_file_path = paste0(cluster_output_folder_path, "/2_4_barplot_level_1_clusters.png")
   barplot_level_2_clusters_file_path = paste0(cluster_output_folder_path, "/2_5_barplot_level_2_clusters.png")
