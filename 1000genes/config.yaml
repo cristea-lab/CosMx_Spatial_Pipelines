@@ -1,0 +1,10 @@
+min_clusters: 12
+max_clusters: 14
+min_nCount_RNA: 20
+max_nFeature_negprobes: 0.5
+
+insitutype_profile_ref: /cristealab/ajordan/projects/BTC_analysis/data/external/insitutype_references/Pancreas.profiles.csv
+
+samples:
+  PCA429:
+    - /cristealab/ajordan/projects/BTC_analysis/data/processed/cosmx/human/resegmented_data/PCA429

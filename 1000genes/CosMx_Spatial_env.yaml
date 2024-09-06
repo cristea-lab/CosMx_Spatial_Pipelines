@@ -1,0 +1,43 @@
+name: cosmx
+channels:
+- conda-forge
+- bioconda
+- defaults
+dependencies:
+- snakemake
+- r-base
+- r-seurat
+- r-sceasy
+- r-reticulate
+- r-dplyr
+- bioconductor-spatialdecon
+- r-tidyverse
+- r-here
+- bioconductor-dittoseq
+
+
+# #INSTALL insituttype manually
+# #- InSituType dependencies
+# - r-data.table
+# - r-fastglm
+# - r-ggplot2
+# #graphics?
+# #grDevices?
+# - r-irlba
+# - r-lsa
+# - r-magrittr
+# - r-matrix
+# - r-mclust
+# - r-r.methodss3
+# - r-rcpp >= 1.0.9
+# - r-rlang
+# - r-scales
+# - bioconductor-singlecellexperiment
+# - bioconductor-sparsematrixstats
+# - r-spatstat.geom
+# #stats?
+# - bioconductor-summarizedexperiment
+# - r-tibble
+# - r-umap
+# #- r-utils?
+# - r-uwot
