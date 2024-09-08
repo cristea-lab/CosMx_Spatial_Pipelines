@@ -22,8 +22,8 @@ args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 1) {
   stop("Please provide one or more file paths as command-line arguments.")
 }
-if (length(args) != 8) {
-    stop("Please double check your input to make sure only 3 command-line inputs are given.")
+if (length(args) != 9) {
+    stop("Please double check your input to make sure only 9 command-line inputs are given.")
 }
 
 
@@ -33,29 +33,32 @@ if (length(args) != 8) {
 sample_name = args[1]
 print(paste("Input sample name: ", sample_name))
 
+sample_rds_path = args[2]
+print(paste("Input sample rds path: ", sample_rds_path))
 
-sample_folder_path = args[2]
+
+sample_folder_path = args[3]
 print(paste("Input sample folder path from AtoMx: ", sample_folder_path))
 
-output_folder_path = args[3]
+output_folder_path = args[4]
 print(paste("Input output folder: ", output_folder_path))
 
-insitutype_reference_sig_csv_file_path = args[4]
+insitutype_reference_sig_csv_file_path = args[5]
 print(paste("Input inSituType ref sig profile from Nanostring: ", insitutype_reference_sig_csv_file_path))
 
 
 # num_cluster, min and max represents the lower and upper end of the range (both inclusive)
-min_num_cluster = args[5]
+min_num_cluster = args[6]
 print(paste("Input lower end of the num of clusters: ", min_num_cluster))
 
-max_num_cluster = args[6]
+max_num_cluster = args[7]
 print(paste("Input higher end of the num of clusters: ", max_num_cluster))
 
 # User input QC metrice after viewing the plot
-min_nCount_RNA = args[7] # >=
+min_nCount_RNA = args[8] # >=
 print(paste("Input QC metrice of min nCount RNA: ", min_nCount_RNA))
 
-max_nFeature_negprobes = args[8] # <
+max_nFeature_negprobes = args[9] # <
 print(paste("Input QC metrice of max nFeature negprobes: ", max_nFeature_negprobes))
 
 
@@ -63,7 +66,7 @@ print(paste("Input QC metrice of max nFeature negprobes: ", max_nFeature_negprob
 #################### OUTPUT ######################
 ##################################################
 
-output_Rds_file_path = paste0(output_folder_path, "/A_1_pre_QC_sample.rds")
+#output_Rds_file_path = paste0(output_folder_path, "/A_1_pre_QC_sample.rds")
 
 post_QC_and_normalization_20_counts_per_cell_rds_file_path = paste0(output_folder_path, "/A_2_post_QC_and_normalization_20_counts_per_cell.rds")
 
@@ -78,7 +81,8 @@ post_QC_and_normalization_20_counts_per_cell_rds_file_path = paste0(output_folde
 
 
 #################### LOAD SAMPLE ####################
-seurat_obj = readRDS(output_Rds_file_path)
+#seurat_obj = readRDS(output_Rds_file_path)
+seurat_obj = readRDS(sample_rds_path)
 
 #######################################################
 #################### PREPROCESSING ####################
