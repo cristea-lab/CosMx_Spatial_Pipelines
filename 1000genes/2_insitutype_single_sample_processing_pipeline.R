@@ -295,6 +295,14 @@ for (num_cluster in min_num_cluster:max_num_cluster) {
   ggsave(barplot_level_3_clusters_file_path)
 
 
+  #####################################
+  ######### EXCEL SHEET TABLE #########
+  #####################################
+
+
+
+
+
   #review mIF staining for each cluster
   #create violin plot of marker scores stratified by collapsed cell type
   VlnPlot(seurat_obj_norm, group.by = "level_2_clusters", features = c("Mean.PanCK", "Mean.CD45", "Mean.CD68_CK8_18"), ncol = 2, pt.size = 0, y.max = 10000)

@@ -1,0 +1,2329 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library("AUCell")
+library("CellChat")
+library("Seurat")
+library("sceasy")
+library("reticulate")
+library("dplyr")
+library("SpatialDecon")
+library("InSituType")
+library("tidyverse")
+library("schard")
+library("ggplot2")
+library("ggpubr")
+library("here")
+library("dittoSeq")
+library("spatstat")
+```
+
+#Section 1 - Prepare Data and Genesets for AUCell analysis
+```{r}
+#load cosmx data
+full_cohort_norm <- readRDS(here("./data/interim/cosmx/human/seurat_objects/full_cohort_semi_sup_insitutype_fully_labeled_07152024.RDS"))
+
+#select only count data from tumor cells
+malignant <- subset(full_cohort_norm, subset = level_1_clusters %in% c("Tumor"))
+malignant_counts <- GetAssayData(object=malignant, slot="counts")
+```
+
+```{r}
+#load basal and classical gene sets
+genesets <- read.csv(here("./data/external/gene_sets/basal_classical_and_fibroblast_gene_sets.csv"))
+
+#select gene sets that represent basal and classical PDAC cells
+polarity_genesets <- genesets[genesets$gs_name == "Raghavan_scClassical"| genesets$gs_name=="Raghavan_scBasal" | genesets$gs_name == "Raghavan_scIC",]
+
+#polarity_genesets <- genesets[genesets$gs_name == "Moffitt_Classical"| genesets$gs_name=="Moffitt_Basal",]
+```
+
+#Section 2 - run AUCell to score cells for Classical and Basal programs
+```{r}
+set.seed(123)
+malignant_rankings <- AUCell_buildRankings(malignant_counts, plotStats=TRUE)
+
+#filter gene sets to include genes present in the rankings
+polarity_genesets_cosmx <-  polarity_genesets[polarity_genesets$gene %in% rownames(malignant_rankings),]
+
+#create list of gene sets
+polarity_genesets_cosmx <- split(polarity_genesets_cosmx$gene, polarity_genesets_cosmx$name)
+
+#run AUC
+cells_AUC <- AUCell_calcAUC(polarity_genesets_cosmx, malignant_rankings)
+save(cells_AUC, file=here("./output/AUCell/cells_AUC.RData"))
+#cells_AUC <- AUCell_run(counts, polarity_genesets)
+
+#explore AUC thresholds 
+cells_assignment <- AUCell_exploreThresholds(cells_AUC, plotHist=TRUE, assign=TRUE) 
+cells_assignment
+```
+
+#Section 3 - Explore Classical and Basal thresholds (not part of main workflow so commented out for now)
+```{r}
+# #plot classical AUC threshold
+# geneSetName <- rownames(cells_AUC)[grep("Classical", rownames(cells_AUC))]
+# 
+# AUCell_plotHist(cells_AUC[geneSetName,], aucThr=0.25)
+# abline(v=0.25)
+# 
+# auc_scores_classical <- getAUC(cells_AUC)[geneSetName, ]
+# # Filter cells with AUCell scores between 0.09 and 0.16
+# weakClassical <- names(which(auc_scores_classical >=0.02 & auc_scores_classical < 0.097))
+# Classical <- names(which(auc_scores_classical >= 0.097 & auc_scores_classical <= 0.167))
+# strongClassical <- names(which(getAUC(cells_AUC)[geneSetName,]>0.16))
+# 
+# geneSetName <- rownames(cells_AUC)[grep("Basal", rownames(cells_AUC))]
+# 
+# #plot basal auc threshold
+# AUCell_plotHist(cells_AUC[geneSetName,], aucThr=0.25)
+# abline(v=0.25)
+# 
+# auc_scores_basal <- getAUC(cells_AUC)[geneSetName, ]
+# # Filter cells with AUCell scores between 0.09 and 0.16
+# weakBasal <- names(which(auc_scores_basal >=0.045 & auc_scores_basal < 0.093))
+# Basal <- names(which(auc_scores_basal >= 0.093 & auc_scores_basal <= 0.18))
+# strongBasal <- names(which(getAUC(cells_AUC)[geneSetName,]>0.18))
+# 
+# geneSetName <- rownames(cells_AUC)[grep("scIC", rownames(cells_AUC))]
+# auc_scores_IC <- getAUC(cells_AUC)[geneSetName, ]
+```
+
+
+#Section 4 - Classify cells based on euclidean distance
+```{r}
+#create merged data frame with both classical and basal scores
+basal_score<-as.data.frame(auc_scores_basal)
+classical_score<-as.data.frame(auc_scores_classical)
+#coexpressor_score <- as.data.frame(auc_scores_IC)
+merged <- merge(basal_score, classical_score, by = 'row.names', all = TRUE) 
+rownames(merged) <- merged$Row.names
+# rownames(merged) <- NULL
+# merged <- merge(merged, coexpressor_score, by = 'row.names', all = TRUE)
+# rownames(merged) <- merged$Row.names
+
+#calculate euclidean distance
+merged$euclidean_dist <- apply(merged[, c("auc_scores_basal", "auc_scores_classical")], 1, function(x) {
+  sqrt((x[1] - x[2])^2)})
+
+
+mal_counts<-as.data.frame(summary(malignant_counts))
+## Correlate Euclidean distance with each gene's expression
+# correlations <- apply(malignant_counts, 1, function(gene_expr) {
+#   cor(gene_expr, merged$euclidean_dist, method = "pearson")
+# })
+
+
+# Classify cells based on Euclidean distance and expression scores
+merged$cell_classification <- ifelse(merged$euclidean_dist < 0.01, "Co-Expressor", 
+                                             ifelse(merged$auc_scores_basal > merged$auc_scores_classical, "Basal", "Classical"))
+
+merged$cell_stratification <- ifelse(merged$cell_classification == "Basal" & merged$auc_scores_basal >= 0.25, "Strong_Basal",
+                                     ifelse(merged$cell_classification == "Basal" & merged$auc_scores_basal < 0.10, "Weak_Basal",
+                                     ifelse(merged$cell_classification == "Basal" & merged$auc_scores_basal < 0.25 & merged$auc_scores_basal >= 0.10, "Basal",
+                                            ifelse(merged$cell_classification == "Classical" & merged$auc_scores_classical >= 0.25, "Strong_Classical",
+                                                   ifelse(merged$cell_classification == "Classical" & merged$auc_scores_classical < 0.25 & merged$auc_scores_classical >= 0.10, "Classical",
+                                                    ifelse(merged$cell_classification == "Classical" & merged$auc_scores_classical < 0.10, "Weak_Classical","Co_Expressor"))))))
+
+
+head(merged)
+subtypetable1 <- table(merged$cell_classification)
+subtypetable2 <- table(merged$cell_stratification)
+
+# Add the Euclidean distance and IC scores to the Seurat object's metadata
+malignant[['level_3B_clusters']] <- merged$cell_classification[match(rownames(malignant@meta.data), rownames(merged))] 
+
+malignant@meta.data$classical_score <- merged$auc_scores_classical[match(rownames(malignant@meta.data), rownames(merged))]
+malignant@meta.data$basal_score <- merged$auc_scores_basal[match(rownames(malignant@meta.data), rownames(merged))]
+malignant@meta.data$coexpressor_score <- merged$auc_scores_IC[match(rownames(malignant@meta.data), rownames(merged))]
+
+malignant@meta.data$polarity_score <- malignant@meta.data$classical_score - malignant@meta.data$basal_score
+
+#unique(malignant@meta.data)
+malignant <- SetIdent(malignant, value='level_3B_clusters')
+library(Seurat)
+
+#plot correlation of AUCell scores
+plot <- FeatureScatter(
+  malignant,
+  "polarity_score",
+  "coexpressor_score",
+  smooth = FALSE,
+  combine = FALSE,
+  slot = "data",
+  plot.cor = TRUE,
+  cols = c("blue","green","orange")
+) + 
+  ggtitle("AUCell Polarity Score vs Coexpressor Score") +
+  xlab("Polarity Score (Classical Score - Basal Score)") +
+  ylab("Coexpressor Score")
+
+plot 
+
+plot <- FeatureScatter(
+  malignant,
+  "classical_score",
+  "basal_score",
+  smooth = FALSE,
+  combine = FALSE,
+  slot = "data",
+  plot.cor = TRUE,
+  cols = c("blue","green","orange")
+) + 
+  ggtitle("AUCell Classical Score vs Basal Score") +
+  xlab("Classical Score") +
+  ylab("Basal Score")
+
+plot
+
+
+#create violin plot of marker scores stratified by collapsed cell type
+plot <- VlnPlot(malignant, group.by = "level_2B_clusters", features = c("classical_score", "basal_score","coexpressor_score"), ncol = 2, pt.size = 0, cols = c("orange","blue","green"), combine = FALSE) 
+
+my_comparisons <- list( c("Classical", "Basal"), c("Classical", "Co-Expressor"), c("Basal", "Co-Expressor"))
+
+plot[[1]] +
+  geom_boxplot(width = 0.2) +
+  ggtitle("Classical Score vs Tumor Cell Subtype") +
+  xlab("Tumor Cell Subtype") +
+  ylab("Classical Score")
+
+plot[[2]] +
+  geom_boxplot(width = 0.25) +
+  ggtitle("Basal Score vs Tumor Cell Subtype") +
+  xlab("Tumor Cell Subtype") +
+  ylab("Basal Score")
+
+plot[[3]] +
+  geom_boxplot(width = 0.25) +
+  ggtitle("Co-Expressor Score vs Tumor Cell Subtype") +
+  xlab("Tumor Cell Subtype") +
+  ylab("Co-Expressor Score")
+```
+
+
+```{r}
+## Run addmodule score (commented out as not primary workflow)
+# malignant <- AddModuleScore(malignant, features = polarity_genesets_cosmx, nbin = 10, ctrl = 50)
+# 
+# #create polarity score from add module score
+# malignant@meta.data$polarity_score_AMS <- malignant@meta.data$Cluster2 - malignant@meta.data$Cluster1
+# 
+# #plot correlation of AUCell scores
+# FeatureScatter(
+#   malignant,
+#   "polarity_score_AMS",
+#   "Cluster3",
+#   smooth = FALSE,
+#   combine = FALSE,
+#   slot = "data",
+#   plot.cor = TRUE,
+# )
+# 
+# #plot correlation of AUCell scores
+# FeatureScatter(
+#   malignant,
+#   "Cluster2",
+#   "Cluster1",
+#   smooth = FALSE,
+#   combine = FALSE,
+#   slot = "data",
+#   plot.cor = TRUE,
+# )
+# 
+# #create violin plot of marker scores stratified by collapsed cell type
+# VlnPlot(malignant, group.by = "level_2B_clusters", features = c("Cluster2", "Cluster1", "Cluster3"), ncol = 2, pt.size = 0)
+
+##get euclidean distance based on add module score
+# #calculate euclidean distance
+# malignant@meta.data$euclidean_dist <- apply(malignant@meta.data[, c("Cluster1", "Cluster2")], 1, function(x) {
+#   sqrt((x[1] - x[2])^2)})
+# 
+# 
+# # Classify cells based on Euclidean distance and expression scores
+# malignant@meta.data$cell_classification <- ifelse(malignant@meta.data$euclidean_dist < 0.01, "Co-Expressor", 
+#                                              ifelse(malignant@meta.data$Cluster1 > malignant@meta.data$Cluster2, "Basal", "Classical"))
+# 
+# malignant@meta.data$cell_stratification <- ifelse(malignant@meta.data$cell_classification == "Basal" & malignant@meta.data$Cluster1 >= 0.25, "Strong_Basal",
+#                                      ifelse(malignant@meta.data$cell_classification == "Basal" & malignant@meta.data$Cluster1 < 0.25 & malignant@meta.data$Cluster1 >= 0.10, "Basal",
+#                                             ifelse(malignant@meta.data$cell_classification == "Classical" & malignant@meta.data$Cluster2 >= 0.25, "Strong_Classical",
+#                                                    ifelse(malignant@meta.data$cell_classification == "Classical" & malignant@meta.data$Cluster2 < 0.25 & malignant@meta.data$Cluster2 >= 0.10, "Classical",
+#                                                     ifelse(malignant@meta.data$cell_classification == "Classical" & malignant@meta.data$Cluster2 < 0.10, "Weak_Classical","Weak_Basal")))))
+# 
+# cell_ids <- rownames(full_cohort_norm@meta.data)
+# full_cohort_norm@meta.data$level_2B_clusters <- full_cohort_norm@meta.data$level_2_clusters
+# full_cohort_norm@meta.data$level_3B_clusters <- full_cohort_norm@meta.data$level_3_clusters %>%
+#   as.character()
+# full_cohort_norm@meta.data$level_3C_clusters <- full_cohort_norm@meta.data$level_3B_clusters %>%
+#   as.character()
+# 
+# full_cohort_norm@meta.data$level_2B_clusters[cell_ids %in% rownames(malignant@meta.data)] <- malignant@meta.data$cell_classification[match(cell_ids[cell_ids %in% rownames(malignant@meta.data)],rownames(malignant@meta.data))]
+# 
+# full_cohort_norm@meta.data$level_3B_clusters[cell_ids %in% rownames(malignant@meta.data)] <- malignant@meta.data$cell_classification[match(cell_ids[cell_ids %in% rownames(malignant@meta.data)],rownames(malignant@meta.data))]
+# 
+# full_cohort_norm@meta.data$level_3C_clusters[cell_ids %in% rownames(malignant@meta.data)] <- malignant@meta.data$cell_stratification[match(cell_ids[cell_ids %in% rownames(malignant@meta.data)],rownames(malignant@meta.data))]
+# 
+# #full_cohort_norm[["malignant"]] <- malignant@meta.data$cell_classification[match(rownames(full_cohort_norm@meta.data), rownames(malignant@meta.data))]
+# 
+# malignant_labeled <- subset(full_cohort_norm, subset = level_1_clusters == "Tumor")
+# malignant_labeled <- subset(malignant_labeled, subset = patient != "PCA671")
+# 
+# #create boxplots of distribution of basal and classical cells
+# dittoBarPlot(
+#     object = malignant_labeled,
+#     var = "level_2B_clusters",
+#     group.by = "patient",
+#     main = "Tumor Subtype Frequency")
+# ggsave("/cristealab/ajordan/projects/BTC_analysis/output/insitutype/basal_classical_distribution.pdf", width=10, height=8)
+# 
+# # Print the updated metadata to verify changes
+# table(full_cohort_norm@meta.data$malignant)
+# 
+# #save object with basal and classical labels
+# saveRDS(full_cohort_norm, here("./data/interim/cosmx/human/seurat_objects/BTC_full_cohort_semi_sup_insitutype_tumor_subtype_labels_07152024.RDS"))
+```
+
+#Section 5 - Identify Differentially-Expressed Genes Between Basal and Classical Cells (not part of main workflow, so commented out for now)
+```{r}
+# # #DimPlot(object=malignant, label=TRUE)
+# tumor_cafs <-  subset(full_cohort_norm, subset = level_3B_clusters %in% c("Closer_Basal", "Closer_Classical"))
+# 
+# # ######Finding differentially expressed genes malignant cell types
+# DEfeatures <- FindAllMarkers(tumor_cafs,pct=0.1,logfc.threshold = 0.25,pseudocount.use = 0.001)
+# #DEfeatures <- FindAllMarkers(malignant)
+# head(DEfeatures)
+# #
+# # # Add a column to the data frame to specify if they are UP- or DOWN- regulated (log2fc respectively positive or negative)<br /><br /><br />
+# # DEfeatures$diffexpressed <- "NO"
+# #   # if log2Foldchange > 0.6 and pvalue < 0.05, set as "UP"
+# # DEfeatures$diffexpressed[DEfeatures$avg_log2FC > 0.5 & DEfeatures$p_val <0.05 ] <- "UP"
+# #   # if log2Foldchange < -0.6 and pvalue < 0.05, set as "DOWN"
+# # DEfeatures$diffexpressed[DEfeatures$avg_log2FC < -0.5 & DEfeatures$p_val <0.05] <- "DOWN"
+# #
+# # head(DEfeatures)
+# #
+# # # Create a new column "delabel" to de, that will contain the name of the top 30 differentially expressed genes (NA in case they are not)
+# # library(tibble)
+# # #DEfeatures <- tibble::rownames_to_column(DEfeatures, "gene")
+# # #DE$delabel <- ifelse(DE$gene %in% head(DE[order(DE$p_val_adj ), "gene"], 30), DE$gene, NA)
+# # # Function to get top 10 genes for each cell type by log p-value
+# # library(dplyr)
+# #   DE1<-DEfeatures %>%
+# #     group_by(cluster) %>%
+# #     arrange(desc(avg_log2FC), desc(p_val_adj)) %>%
+# #     slice_head(n=30)  %>%
+# #     slice_tail(n=5) %>%
+# #     ungroup()
+# #
+# #   DE2<-DEfeatures %>%
+# #     group_by(cluster) %>%
+# #     arrange(desc(avg_log2FC), desc(p_val_adj)) %>%
+# #     slice_tail(n=30) %>%
+# #     ungroup()
+# #
+# # DE<-rbind(DE1, DE2)
+# #
+# #
+# DE$log10_pval <- -log10(DE$p_val_adj)
+# # Add a pseudo count of 0.1 to all p-values
+# DE$pvalue_adjusted <- DE$p_val+ 0.0001
+#
+#
+# library('EnhancedVolcano')
+# library(ggplot2)
+# library(ggrepel)
+#
+# EnhancedVolcano(DE,
+#                 lab = DE$gene,
+#                 pCutoff = 10e-7,
+#                 x = 'avg_log2FC',
+#                 y = 'p_val_adj')
+#
+# myvolcanoplot <- ggplot(data = DE, aes(x = avg_log2FC, y = pvalue_adjusted , col = cluster, label = gene)) +
+#   geom_vline(xintercept = c(-1, 1), col = "gray", linetype = 'dashed') +
+#   geom_hline(yintercept = -log10(0.05), col = "gray", linetype = 'dashed') +
+#   geom_point(size = 2) +
+#   #scale_color_manual(values = c("#00AFBB", "grey", "#bb0c00"), # to set the colours of our variable<br />
+#   #                   labels = c("Downregulated", "Not significant", "Upregulated")) + # to set the labels in case we want to overwrite the categories from the dataframe (UP, DOWN, NO)<br />
+#   coord_cartesian(ylim = c(10e-8, 10e-6), xlim = c(-5, 5)) + # since some genes can have minuslog10padj of inf, we set these limits<br />
+#   labs(color = 'cluster', #legend_title,<br />
+#        x = expression("log"[2]*"FC"), y = expression("-log"[10]*"p-value"))+
+#   scale_x_continuous(breaks = seq(-5, 5, 1)) + # to customise the breaks in the x axis<br />
+#   ggtitle('Basal Classical and Intermediate cell differentially expressed genes') + # Plot title<br />
+#   geom_text_repel(max.overlaps = Inf) # To show all labels
+# myvolcanoplot
+# #ggsave("/cristealab/sudheshna/BTC/")
+
+# malignant@assays[["Nanostring"]]@layers[["counts"]] <- as.matrix(malignant@assays[["Nanostring"]]@layers[["counts"]])+1
+# sbc_malignant <- LayerData(malignant, layer = "counts")
+# dds<-DESeqDataSetFromMatrix(countData=sbc_malignant, colData= malignant@meta.data, design=~level_2B_clusters)
+# dds<-DESeq(dds)
+# vsdata <- vst(dds, blind=FALSE)
+#
+# plotPCA(vsdata, intgroup="cell_classification")
+# plotDispEsts(dds)
+
+```
+
+#Section 6 - Label Basal and Classical Cells in Main Object
+```{r}
+
+cell_ids <- rownames(full_cohort_norm@meta.data)
+#create "3B and 4B" annotations in which "Basal", "Classical" and "Co-Expressor" are the classes for tumor cells rather than the first or second most highly-expressed gene in that cluster
+#3C and 4C are created to store information on whether a tumor cell is weakly or strongly basal or classical
+full_cohort_norm@meta.data$level_3B_clusters <- full_cohort_norm@meta.data$level_3_clusters
+full_cohort_norm@meta.data$level_4B_clusters <- full_cohort_norm@meta.data$level_4_clusters %>%
+  as.character()
+full_cohort_norm@meta.data$level_4C_clusters <- full_cohort_norm@meta.data$level_4_clusters %>%
+  as.character()
+
+#replace old cell classifications with the new classes
+full_cohort_norm@meta.data$level_3B_clusters[cell_ids %in% rownames(merged)] <- merged$cell_classification[match(cell_ids[cell_ids %in% rownames(merged)],rownames(merged))]
+
+full_cohort_norm@meta.data$level_3C_clusters[cell_ids %in% rownames(merged)] <- merged$cell_stratification[match(cell_ids[cell_ids %in% rownames(merged)],rownames(merged))]
+
+full_cohort_norm@meta.data$level_4B_clusters[cell_ids %in% rownames(merged)] <- merged$cell_classification[match(cell_ids[cell_ids %in% rownames(merged)],rownames(merged))]
+
+full_cohort_norm@meta.data$level_4C_clusters[cell_ids %in% rownames(merged)] <- merged$cell_stratification[match(cell_ids[cell_ids %in% rownames(merged)],rownames(merged))]
+
+#full_cohort_norm[["malignant"]] <- merged$cell_classification[match(rownames(full_cohort_norm@meta.data), rownames(merged))]
+
+malignant_labeled <- subset(full_cohort_norm, subset = level_1_clusters == "Tumor")
+malignant_labeled <- subset(malignant_labeled, subset = patient != "PCA671")
+
+#create boxplots of distribution of basal and classical cells
+dittoBarPlot(
+    object = malignant_labeled,
+    var = "level_3B_clusters",
+    group.by = "patient",
+    main = "Tumor Subtype Frequency")
+ggsave("/cristealab/ajordan/projects/BTC_analysis/output/insitutype/basal_classical_distribution.pdf", width=10, height=8)
+
+# Print the updated metadata to verify changes
+table(malignant_labeled@meta.data$level_4B_clusters)
+
+#save object with basal and classical labels
+saveRDS(full_cohort_norm, here("./data/interim/cosmx/human/seurat_objects/BTC_full_cohort_semi_sup_insitutype_tumor_subtype_labels_07152024.RDS"))
+
+
+```
+
+
+#Section 7 - Label Fibroblast Cells
+```{r}
+fibroblast <- subset(full_cohort_norm, subset = level_2B_clusters %in% c("FAP_positive_mycaf", "FAP_negative_mycaf","iCAF"))
+# cell_ids <- rownames(full_cohort_norm@meta.data)
+# 
+# full_cohort_norm@meta.data$level_2B_clusters[cell_ids %in% rownames(merged)] <- merged$cell_classification[match(cell_ids[cell_ids %in% rownames(merged)],rownames(merged))]
+# 
+# full_cohort_norm@meta.data$level_3B_clusters[cell_ids %in% rownames(merged)] <- merged$cell_classification[match(cell_ids[cell_ids %in% rownames(merged)],rownames(merged))]
+# 
+# #full_cohort_norm[["malignant"]] <- merged$cell_classification[match(rownames(full_cohort_norm@meta.data), rownames(merged))]
+# 
+# fibroblast_labeled <- subset(full_cohort_norm, subset = level_2B_clusters == c("myCAF","iCAF","myCAF-iCAF"))
+# fibroblast_labeled <- subset(fibroblast_labeled, subset = patient != "PCA671")
+# 
+# #create boxplots of distribution of basal and classical cells
+
+
+dittoBarPlot(
+    object = fibroblast,
+    var = "level_3_clusters",
+    group.by = "patient",
+    main = "Fibroblast Subtype Frequency")
+
+dittoBarPlot(
+    object = fibroblast,
+    var = "level_3B_clusters",
+    group.by = "patient",
+    main = "Fibroblast Subtype Frequency")
+
+#ggsave("/cristealab/ajordan/projects/BTC_analysis/output/insitutype/myCAF_iCAF_distribution.pdf", width=10, height=8)
+```
+
+
+```{r}
+
+Idents(full_cohort_norm) <- "level_2_clusters"
+
+caf_cells <- WhichCells(full_cohort_norm, idents = c("myCAF","iCAF","Mesenchymal.Cell"))
+
+FAP_positive_caf <- WhichCells(full_cohort_norm, cells = caf_cells, expression = FAP > 0)
+FAP_negative_caf <- WhichCells(full_cohort_norm, cells = caf_cells, expression = FAP == 0)
+
+# Assign 'FAP+ve' and 'FAP-ve' statuses to mycaf cells
+full_cohort_norm@meta.data$level_2B_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_positive_caf] <- "FAP_positive_caf"
+full_cohort_norm@meta.data$level_2B_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_negative_caf] <- "FAP_negative_caf"
+
+# Assign 'FAP+ve' and 'FAP-ve' statuses to mycaf cells
+full_cohort_norm@meta.data$level_3B_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_positive_caf] <- "FAP_positive_caf"
+full_cohort_norm@meta.data$level_3B_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_negative_caf] <- "FAP_negative_caf"
+
+full_cohort_norm@meta.data$level_3C_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_positive_caf] <- "FAP_positive_caf"
+full_cohort_norm@meta.data$level_3C_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_negative_caf] <- "FAP_negative_caf"
+
+caf <- subset(full_cohort_norm, cells = caf_cells)
+
+dittoBarPlot(
+    object = caf,
+    var = "level_2_clusters",
+    group.by = "patient",
+    main = "Fibroblast Subtype Frequency")
+
+dittoBarPlot(
+    object = caf,
+    var = "level_3B_clusters",
+    group.by = "patient",
+    main = "Fibroblast Subtype Frequency")
+
+# Idents(caf) <- "level_2_clusters"
+# RidgePlot(caf, features = "FAP", group.by = "level_3_clusters", ncol = 2)
+VlnPlot(caf, features = "FAP")
+
+library(Seurat)
+library(ggplot2)
+
+
+# Check the distribution of the feature
+feature_data <- FetchData(caf, vars = "FAP")
+summary(feature_data)
+hist(feature_data, breaks = 6, main = "Histogram of FAP expression", xlab = "Expression Level")
+
+fibroblasttable1 <- table(caf@meta.data$level_3B_clusters)
+
+#save seurat object
+
+
+#split cells into fap+ mycaf and fap+icaf
+Idents(full_cohort_norm) <- "level_3_clusters"
+
+mycaf_cells <- WhichCells(full_cohort_norm, idents = "myCAF")
+
+FAP_positive_mycaf <- WhichCells(full_cohort_norm, cells = mycaf_cells, expression = FAP > 0)
+FAP_negative_mycaf <- WhichCells(full_cohort_norm, cells = mycaf_cells, expression = FAP == 0)
+
+# Assign 'FAP+ve' and 'FAP-ve' statuses to mycaf cells
+# full_cohort_norm@meta.data$level_2B_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_positive_mycaf] <- "FAP_positive_mycaf"
+# full_cohort_norm@meta.data$level_2B_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_negative_mycaf] <- "FAP_negative_mycaf"
+
+# Assign 'FAP+ve' and 'FAP-ve' statuses to mycaf cells
+full_cohort_norm@meta.data$level_3B_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_positive_mycaf] <- "FAP_positive_mycaf"
+full_cohort_norm@meta.data$level_3B_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_negative_mycaf] <- "FAP_negative_mycaf"
+
+full_cohort_norm@meta.data$level_3C_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_positive_mycaf] <- "FAP_positive_mycaf"
+full_cohort_norm@meta.data$level_3C_clusters[rownames(full_cohort_norm@meta.data) %in% FAP_negative_mycaf] <- "FAP_negative_mycaf"
+#save seurat object
+
+saveRDS(full_cohort_norm, here("./data/interim/cosmx/human/seurat_objects/BTC_full_cohort_semi_sup_insitutype_fully_labeled_07152024.RDS"))
+
+
+#save as anndata object
+# SaveH5Seurat(full_cohort_norm, filename = here("./data/interim/cosmx/human/seurat_objects/BTC_full_cohort_semi_sup_insitutype_07082024.h5Seurat"))
+# Convert(here("./data/interim/cosmx/human/seurat_objects/BTC_full_cohort_semi_sup_insitutype_07082024.h5Seurat"), dest = "h5ad")
+```
+
+#Section 7 - Run AUCell to identify cafs close to FAP+ cafs
+```{r}
+fibroblast_counts <- GetAssayData(object=caf, slot="counts")
+
+fibroblast_rankings <- AUCell_buildRankings(fibroblast_counts, plotStats=TRUE)
+
+#identify fibroblast gene sets
+fibroblast_genesets <- genesets[genesets$gs_name == "FAP_pos_caf",]
+
+#filter gene sets to include genes present in the rankings
+fibroblast_genesets_cosmx <-  fibroblast_genesets[fibroblast_genesets$gene %in% rownames(fibroblast_rankings),]
+
+#create list of gene sets
+fibroblast_genesets_cosmx <- split(fibroblast_genesets_cosmx$gene, fibroblast_genesets_cosmx$name)
+
+#run AUC
+cells_AUC <- AUCell_calcAUC(fibroblast_genesets_cosmx, fibroblast_rankings)
+#save(cells_AUC, file=here("./output/AUCell/cells_AUC.RData"))
+#cells_AUC <- AUCell_run(counts, polarity_genesets)
+
+#explore AUC thresholds
+cells_assignment <- AUCell_exploreThresholds(cells_AUC, plotHist=TRUE, assign=TRUE)
+cells_assignment
+
+#plot myCAF AUC threshold
+geneSetName <- rownames(cells_AUC)[grep("FAP", rownames(cells_AUC))]
+
+# AUCell_plotHist(cells_AUC[geneSetName,], aucThr=0.25)
+# abline(v=0.25)
+
+auc_scores_FAP <- getAUC(cells_AUC)[geneSetName, ]
+
+
+merged <- as.data.frame(auc_scores_FAP)
+
+caf@meta.data["FAP_CAF_score"] <- merged$auc_scores_FAP[match(rownames(caf@meta.data), rownames(merged))]
+
+
+caf@meta.data$FAP_CAF_score_level <- ifelse(caf@meta.data$FAP_CAF_score > quantile(caf@meta.data$FAP_CAF_score, prob=c(.75), type=1), "FAP_like",
+                                            ifelse(caf@meta.data$FAP_CAF_score < quantile(caf@meta.data$FAP_CAF_score, prob=c(.25), type=1), "FAP_low",
+                                                   "FAP_intermediate"))
+
+
+#add new fibroblast classifications to data object
+cell_ids <- rownames(full_cohort_norm@meta.data)
+# full_cohort_norm@meta.data$level_2B_clusters <- full_cohort_norm@meta.data$level_2_clusters
+# full_cohort_norm@meta.data$level_3B_clusters <- full_cohort_norm@meta.data$level_3_clusters %>%
+#   as.character()
+# full_cohort_norm@meta.data$level_3C_clusters <- full_cohort_norm@meta.data$level_3B_clusters %>%
+#   as.character()
+
+full_cohort_norm@meta.data$level_2B_clusters[cell_ids %in% rownames(caf@meta.data)] <- caf@meta.data$FAP_CAF_score_level[match(cell_ids[cell_ids %in% rownames(caf@meta.data)],rownames(caf@meta.data))]
+
+full_cohort_norm@meta.data$level_3B_clusters[cell_ids %in% rownames(caf@meta.data)] <- caf@meta.data$FAP_CAF_score_level[match(cell_ids[cell_ids %in% rownames(caf@meta.data)],rownames(caf@meta.data))]
+
+full_cohort_norm@meta.data$level_3C_clusters[cell_ids %in% rownames(caf@meta.data)] <- caf@meta.data$FAP_CAF_score_level[match(cell_ids[cell_ids %in% rownames(caf@meta.data)],rownames(caf@meta.data))]
+
+#check proportion
+dittoBarPlot(
+    object = caf,
+    var = "FAP_CAF_score_level",
+    group.by = "patient",
+    main = "Fibroblast Subtype Frequency")
+
+dittoBarPlot(
+    object = caf,
+    var = "FAP_CAF_score_level",
+    group.by = "patient",
+    main = "Fibroblast Subtype Frequency")
+```
+
+#Section 8 - Calculate averaged-10 nearest neighbor distance between fap-like cells and basal and classical cells
+```{r}
+set.seed(1)
+
+full_cohort_norm@meta.data$CenterX_global_px <- full_cohort_norm@meta.data$CenterX_global_px * 0.12028 
+full_cohort_norm@meta.data$CenterY_global_px <- full_cohort_norm@meta.data$CenterY_global_px * 0.12028 
+full_cohort_norm@meta.data$CenterX_local_px <- full_cohort_norm@meta.data$CenterX_local_px * 0.12028 
+full_cohort_norm@meta.data$CenterY_local_px <- full_cohort_norm@meta.data$CenterY_local_px * 0.12028 
+malignant_cases <- subset(full_cohort_norm, subset = patient == "PCA84")
+
+# ppp <- ppp(x=malignant_cases@meta.data$CenterX_local_px, y = malignant_cases@meta.data$CenterY_local_px, xrange = range(malignant_cases@meta.data$CenterX_local_px), yrange = range(malignant_cases@meta.data$CenterY_local_px), marks = factor(malignant_cases@meta.data$level_3B_clusters))
+
+ppp <- ppp(x=malignant_cases@meta.data$CenterX_global_px, y = malignant_cases@meta.data$CenterY_global_px, xrange = range(malignant_cases@meta.data$CenterX_global_px), yrange = range(malignant_cases@meta.data$CenterY_global_px), marks = factor(malignant_cases@meta.data$level_3B_clusters))
+
+ppp <- ppp[,!duplicated(ppp)]
+
+# # Subset the point pattern for marks "a", "b", and "c"
+ppp_classical <- subset(ppp, marks == "Classical")
+ppp_basal <- subset(ppp, marks == "Basal")
+#ppp_fapneg <- subset(ppp, marks == "FAP_low")
+ppp_fapneg <- subset(ppp, marks == "FAP_negative_caf")
+ppp_fappos <- subset(ppp, marks == "FAP_positive_caf")
+#ppp_fappos <- subset(ppp, marks %in% c("FAP_like","FAP_intermediate"))
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "c"
+nn_classical_fap <- nncross(ppp_classical, ppp_fappos, k=1:10)
+nndist_classical_fap <- nn_classical_fap[,1:10]
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "b"
+nn_basal_fap <- nncross(ppp_basal, ppp_fappos, k=1:10)
+nndist_basal_fap <- nn_basal_fap[,1:10]
+
+# Compute the average nearest neighbor distance for each pair of marks
+avg_dist_classical_fap <- apply(nndist_classical_fap, MARGIN = 1, FUN = mean)
+avg_dist_basal_fap <- apply(nndist_basal_fap, MARGIN = 1, FUN = mean)
+
+avg_dist_classical_fap <- as.data.frame(avg_dist_classical_fap)
+avg_dist_classical_fap$classification <- rep("Classical", nrow(avg_dist_classical_fap))
+avg_dist_basal_fap <- as.data.frame(avg_dist_basal_fap)
+avg_dist_basal_fap$classification <- rep("Basal", nrow(avg_dist_basal_fap))
+colnames(avg_dist_basal_fap) <- c("nn_dist","classification")
+colnames(avg_dist_classical_fap) <- c("nn_dist","classification")
+total_df <- rbind(avg_dist_classical_fap, avg_dist_basal_fap)
+
+print(median(avg_dist_basal_fap$nn_dist))
+print(median(avg_dist_classical_fap$nn_dist))
+
+ggplot(total_df, aes(x=classification, y=nn_dist, fill=classification)) +
+  geom_violin(trim=TRUE)+
+  geom_boxplot(width = 0.1) +
+  scale_fill_manual(values = c("orange","blue")) +
+  theme_classic() +
+  xlab("Tumor Cell Subtype") +
+  ylab("Average Nearest Neighbor Distance (k 1:10) To Fap-Positive CAFs") +
+  #ylim(0, 0.3) + 
+  theme(axis.text.y = element_text(size=12),
+        axis.title.y =element_text(size=8)) +
+  stat_compare_means(method = "wilcox.test", label.x.npc = "centre")
+```
+
+
+```{r}
+#plot myCAF AUC threshold
+geneSetName <- rownames(cells_AUC)[grep("myCAF", rownames(cells_AUC))]
+
+# AUCell_plotHist(cells_AUC[geneSetName,], aucThr=0.25)
+# abline(v=0.25)
+
+auc_scores_myCAF <- getAUC(cells_AUC)[geneSetName, ]
+
+#plot iCAF auc threshold
+geneSetName <- rownames(cells_AUC)[grep("iCAF", rownames(cells_AUC))]
+
+# AUCell_plotHist(cells_AUC[geneSetName,], aucThr=0.25)
+# abline(v=0.25)
+
+auc_scores_iCAF <- getAUC(cells_AUC)[geneSetName, ]
+
+geneSetName <- rownames(cells_AUC)[grep("CAF", rownames(cells_AUC))]
+auc_scores_FAP <- getAUC(cells_AUC)[geneSetName, ]
+#create merged data frame with both myCAF and iCAF scores
+#iCAF_score<-as.data.frame(auc_scores_iCAF)
+#myCAF_score<-as.data.frame(auc_scores_myCAF)
+#merged <- merge(iCAF_score, myCAF_score,
+#                                    by = 'row.names', all = TRUE)
+
+merged <- as.data.frame(auc_scores_FAP)
+# #calculate euclidean distance
+# merged$euclidean_dist <- apply(merged[, c("auc_scores_iCAF", "auc_scores_myCAF")], 1, function(x) {
+#   sqrt((x[1] - x[2])^2)})
+# 
+# 
+# mal_counts<-as.data.frame(summary(fibroblast_counts))
+# ## Correlate Euclidean distance with each gene's expression
+# correlations <- apply(fibroblast_counts, 1, function(gene_expr) {
+#   cor(gene_expr, merged$euclidean_dist, method = "pearson")
+# })
+# 
+# 
+# # Classify cells based on Euclidean distance and expression scores
+# merged$cell_classification <- ifelse(merged$euclidean_dist < 0.01, "myCAF-iCAF",
+#                                              ifelse(merged$auc_scores_iCAF > merged$auc_scores_myCAF, "iCAF", "myCAF"))
+# 
+# head(merged)
+# table(merged$cell_classification)
+# 
+# # Add the Euclidean distance and IC scores to the Seurat object's metadata
+# fibroblast[['level_2B_clusters']] <- merged$cell_classification[match(rownames(fibroblast@meta.data), rownames(merged))]
+# 
+# 
+# unique(fibroblast@meta.data)
+# fibroblast <- SetIdent(fibroblast, value='level_2B_clusters')
+
+caf@meta.data$myCAF_score <- merged$auc_scores_myCAF[match(rownames(caf@meta.data), rownames(merged))]
+caf@meta.data$iCAF_score <- merged$auc_scores_iCAF[match(rownames(caf@meta.data), rownames(merged))]
+
+#plot correlation of AUCell scores
+FeatureScatter(
+  caf,
+  "myCAF_score",
+  "iCAF_score",
+  smooth = FALSE,
+  combine = FALSE,
+  slot = "data",
+  plot.cor = TRUE,
+)
+
+
+#create violin plot of marker scores stratified by collapsed cell type
+VlnPlot(caf, group.by = "level_2B_clusters", features = c("myCAF_score", "iCAF_score"), ncol = 2, pt.size = 0)
+
+VlnPlot(caf, features = c("COL1A1","ACTA2","LMNA"), pt.size = 0)
+
+# fibroblast <- AddModuleScore(fibroblast, features = fibroblast_genesets_cosmx, nbin = 10, ctrl = 50)
+# 
+# #plot correlation of AUCell scores
+# FeatureScatter(
+#   fibroblast,
+#   "Cluster2",
+#   "Cluster1",
+#   smooth = FALSE,
+#   combine = FALSE,
+#   slot = "data",
+#   plot.cor = TRUE,
+# )
+
+# #plot correlation of AUCell scores
+# FeatureScatter(
+#   fibroblast,
+#   "Cluster2",
+#   "Cluster1",
+#   smooth = FALSE,
+#   combine = FALSE,
+#   slot = "data",
+#   plot.cor = TRUE,
+# )
+# 
+# #create violin plot of marker scores stratified by collapsed cell type
+# VlnPlot(fibroblast, group.by = "level_3_clusters", features = c("Cluster2", "Cluster1"), ncol = 2, pt.size = 0)
+# 
+# VlnPlot(fibroblast, group.by = "level_3_clusters", features = c("FAP","LMNA","CXCL14"), ncol = 2, pt.size = 0.5)
+```
+
+
+#minimum nearest neighbor distance
+```{r}
+# set.seed(1)
+# 
+# malignant_cases <- subset(full_cohort_norm, subset = patient != "PCA671")
+# 
+# ppp <- ppp(x=malignant_cases@meta.data$CenterX_global_px, y = malignant_cases@meta.data$CenterY_global_px, xrange = range(malignant_cases@meta.data$CenterX_global_px), yrange = range(malignant_cases@meta.data$CenterY_global_px), marks = factor(malignant_cases@meta.data$level_3B_clusters))
+# 
+# # # Subset the point pattern for marks "a", "b", and "c"
+# ppp_classical_fap <- subset(ppp, marks == c("Classical","FAP_positive_caf"))
+# ppp_basal_fap <- subset(ppp, marks == c("Basal","FAP_positive_caf"))
+# ppp_tumor_fap <- subset(ppp, marks == c("Classical","Basal","FAP_positive_caf"))
+# ppp_classical <- subset(ppp, marks == c("Classical"))
+# ppp_basal <- subset(ppp, marks == c("Basal"))
+# ppp_fap <- subset(ppp, marks == c("FAP_positive_caf"))
+# 
+# 
+# test <-nndist(X=ppp_tumor_fap)
+# test1 <-maxnndist(X=ppp_tumor_fap, by=marks(ppp_tumor_fap))
+# 
+# test2 <- marktable(X=ppp_tumor_fap, N=10, exclude = TRUE, collapse = FALSE)
+# test3 <- markstat(X=ppp_tumor_fap, marktable)
+# 
+# test4 <- crossdist(ppp_basal, ppp_fap)
+# test5 <- crossdist(ppp_classical, ppp_fap)
+# 
+# test6 <- nncross(ppp_basal, ppp_fap, k = 10)
+# test7 <- nncross(ppp_classical, ppp_fap, k = 10)
+# 
+# count_fap_neighbors_basal <- rowSums(matrix(test6$which <= npoints(ppp_fap), nrow = npoints(ppp_basal), ncol = 10))
+# count_fap_neighbors_classical <- rowSums(matrix(test7$which <= npoints(ppp_fap), nrow = npoints(ppp_classical), ncol = 10))
+# 
+# avg_basal <- mean(count_fap_neighbors_basal)
+# avg_classical <- mean(count_fap_neighbors_classical)
+# 
+# print(mean(test4))
+# print(mean(test5))
+```
+
+
+#nnd analysis - basal and classical vs fap
+```{r}
+set.seed(1)
+
+full_cohort_norm@meta.data$CenterX_global_px <- full_cohort_norm@meta.data$CenterX_global_px * 0.12028 
+full_cohort_norm@meta.data$CenterY_global_px <- full_cohort_norm@meta.data$CenterY_global_px * 0.12028 
+full_cohort_norm@meta.data$CenterX_local_px <- full_cohort_norm@meta.data$CenterX_local_px * 0.12028 
+full_cohort_norm@meta.data$CenterY_local_px <- full_cohort_norm@meta.data$CenterY_local_px * 0.12028 
+malignant_cases <- subset(full_cohort_norm, subset = patient == "PCA429")
+
+# ppp <- ppp(x=malignant_cases@meta.data$CenterX_local_px, y = malignant_cases@meta.data$CenterY_local_px, xrange = range(malignant_cases@meta.data$CenterX_local_px), yrange = range(malignant_cases@meta.data$CenterY_local_px), marks = factor(malignant_cases@meta.data$level_3B_clusters))
+
+ppp <- ppp(x=malignant_cases@meta.data$CenterX_global_px, y = malignant_cases@meta.data$CenterY_global_px, xrange = range(malignant_cases@meta.data$CenterX_global_px), yrange = range(malignant_cases@meta.data$CenterY_global_px), marks = factor(malignant_cases@meta.data$level_3B_clusters))
+
+ppp <- ppp[,!duplicated(ppp)]
+
+# # Subset the point pattern for marks "a", "b", and "c"
+ppp_classical <- subset(ppp, marks == "Classical")
+ppp_basal <- subset(ppp, marks == "Basal")
+ppp_fapneg <- subset(ppp, marks == "FAP_negative_caf")
+ppp_fappos <- subset(ppp, marks %in% c("FAP_positive_caf"))
+
+# # Standardize the coordinates
+# standardize <- function(ppp) {
+#   ppp$x <- (ppp$x - mean(ppp$x)) / sd(ppp$x)
+#   ppp$y <- (ppp$y - mean(ppp$y)) / sd(ppp$y)
+#   return(ppp)
+# }
+
+
+# Normalize the coordinates to [0, 1]
+# normalize <- function(ppp) {
+#   ppp$x <- (ppp$x - min(ppp$x)) / (max(ppp$x) - min(ppp$x))
+#   ppp$y <- (ppp$y - min(ppp$y)) / (max(ppp$y) - min(ppp$y))
+#   return(ppp)
+# }
+# 
+# ppp_basal_normalized <- normalize(ppp_basal)
+# ppp_classical_normalized <- normalize(ppp_classical)
+# ppp_fap_normalized <- normalize(ppp_fap)
+
+
+# ppp_basal_standardized <- standardize(ppp_basal)
+# ppp_classical_standardized <- standardize(ppp_classical)
+# ppp_fap_standardized <- standardize(ppp_fap)
+
+# Find the nearest neighbor distances from points in ppp_x to points in ppp_y
+
+
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "c"
+nn_classical_fap <- nncross(ppp_classical, ppp_fappos, k=1:10)
+nndist_classical_fap <- nn_classical_fap[,1:10]
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "b"
+nn_basal_fap <- nncross(ppp_basal, ppp_fappos, k=1:10)
+nndist_basal_fap <- nn_basal_fap[,1:10]
+
+# Compute the average nearest neighbor distance for each pair of marks
+avg_dist_classical_fap <- apply(nndist_classical_fap, MARGIN = 1, FUN = mean)
+avg_dist_basal_fap <- apply(nndist_basal_fap, MARGIN = 1, FUN = mean)
+
+avg_dist_classical_fap <- as.data.frame(avg_dist_classical_fap)
+avg_dist_classical_fap$classification <- rep("Classical", nrow(avg_dist_classical_fap))
+avg_dist_basal_fap <- as.data.frame(avg_dist_basal_fap)
+avg_dist_basal_fap$classification <- rep("Basal", nrow(avg_dist_basal_fap))
+colnames(avg_dist_basal_fap) <- c("nn_dist","classification")
+colnames(avg_dist_classical_fap) <- c("nn_dist","classification")
+total_df <- rbind(avg_dist_classical_fap, avg_dist_basal_fap)
+
+# avg_nndist_classical_fap <- median(nndist_classical_fap)
+# avg_nndist_basal_fap <- median(nndist_basal_fap)
+# print(avg_nndist_classical_fap)
+# print(avg_nndist_basal_fap)
+# 
+# classical_df <- as.data.frame(nndist_classical_fap)
+# classical_df$classification <- rep("Classical", nrow(classical_df))
+# basal_df <- as.data.frame(nndist_basal_fap)
+# basal_df$classification <- rep("Basal", nrow(basal_df))
+# colnames(basal_df) <- c("nn_dist","classification")
+# colnames(classical_df) <- c("nn_dist","classification")
+# total_df <- rbind(classical_df, basal_df)
+
+# ggplot(total_df, aes(x=classification, y=nn_dist, fill=classification)) +
+#   geom_violin(trim=TRUE)+
+#   geom_boxplot(width = 0.2) +
+#   scale_fill_manual(values = c("orange","blue")) +
+#   theme_classic() +
+#   xlab("Tumor Cell Subtype") +
+#   ylab("Standardized Nearest Neighbor Distance To Fap-Positive CAFs") +
+#   #ylim(0, 0.3) + 
+#   theme(axis.text.y = element_text(size=12),
+#         axis.title.y =element_text(size=8)) +
+#   stat_compare_means(method = "wilcox.test", label.x.npc = "centre")
+print(median(avg_dist_basal_fap$nn_dist))
+print(median(avg_dist_classical_fap$nn_dist))
+
+ggplot(total_df, aes(x=classification, y=nn_dist, fill=classification)) +
+  geom_violin(trim=TRUE)+
+  geom_boxplot(width = 0.1) +
+  scale_fill_manual(values = c("orange","blue")) +
+  theme_classic() +
+  xlab("Tumor Cell Subtype") +
+  ylab("Average Nearest Neighbor Distance (k 1:10) To Fap-Positive CAFs") +
+  #ylim(0, 0.3) + 
+  theme(axis.text.y = element_text(size=12),
+        axis.title.y =element_text(size=8)) +
+  stat_compare_means(method = "wilcox.test", label.x.npc = "centre")
+
+
+# gcross1 <- Gcross(ppp, i = "Basal", j = "FAP_positive_caf", r = c(0:100))
+# plot(gcross1)
+# gcross2 <- Gcross(ppp, i = "Basal", j = "FAP_negative_caf", r = c(0:100))
+# plot(gcross2)
+# gcross2.5 <- Gcross(ppp, i = "Basal", j = "Basal", r = c(0:100))
+# plot(gcross2.5)
+# gcross3 <- Gcross(ppp, i = "Classical", j = "FAP_positive_caf", r = c(0:100))
+# plot(gcross3)
+# gcross4 <- Gcross(ppp, i = "Classical", j = "FAP_negative_caf", r = c(0:100))
+# plot(gcross4)
+# gcross5 <- Gcross(ppp, i = "CD8.T.Cell", j = "B.Cell", r = c(0:100))
+# plot(gcross5)
+# gcross6 <- Gcross(ppp, i = "CD8.T.Cell", j = "iCAF", r = c(0:100))
+# plot(gcross6)
+# gcross7 <- Gcross(ppp, i = "B.Cell", j = "iCAF", r = c(0:100))
+# plot(gcross7)
+
+```
+
+```{r}
+
+ppp <- ppp(x=malignant_cases@meta.data$CenterX_global_px, y = malignant_cases@meta.data$CenterY_global_px, xrange = range(malignant_cases@meta.data$CenterX_global_px), yrange = range(malignant_cases@meta.data$CenterY_global_px), marks = factor(malignant_cases@meta.data$level_3B_clusters))
+
+ppp <- ppp[,!duplicated(ppp)]
+
+# # Subset the point pattern for marks "a", "b", and "c"
+ppp_classical <- subset(ppp, marks == "CD8.T.Cell")
+ppp_basal <- subset(ppp, marks == "Basal")
+ppp_fapneg <- subset(ppp, marks == "FAP_negative_caf")
+ppp_fappos <- subset(ppp, marks %in% c("FAP_positive_caf"))
+
+# # Standardize the coordinates
+# standardize <- function(ppp) {
+#   ppp$x <- (ppp$x - mean(ppp$x)) / sd(ppp$x)
+#   ppp$y <- (ppp$y - mean(ppp$y)) / sd(ppp$y)
+#   return(ppp)
+# }
+
+
+# Normalize the coordinates to [0, 1]
+# normalize <- function(ppp) {
+#   ppp$x <- (ppp$x - min(ppp$x)) / (max(ppp$x) - min(ppp$x))
+#   ppp$y <- (ppp$y - min(ppp$y)) / (max(ppp$y) - min(ppp$y))
+#   return(ppp)
+# }
+# 
+# ppp_basal_normalized <- normalize(ppp_basal)
+# ppp_classical_normalized <- normalize(ppp_classical)
+# ppp_fap_normalized <- normalize(ppp_fap)
+
+
+# ppp_basal_standardized <- standardize(ppp_basal)
+# ppp_classical_standardized <- standardize(ppp_classical)
+# ppp_fap_standardized <- standardize(ppp_fap)
+
+# Find the nearest neighbor distances from points in ppp_x to points in ppp_y
+
+
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "c"
+nn_classical_fap <- nncross(ppp_classical, ppp_fappos, k=1:10)
+nndist_classical_fap <- nn_classical_fap[,1:10]
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "b"
+nn_basal_fap <- nncross(ppp_basal, ppp_fappos, k=1:10)
+nndist_basal_fap <- nn_basal_fap[,1:10]
+
+# Compute the average nearest neighbor distance for each pair of marks
+avg_dist_classical_fap <- apply(nndist_classical_fap, MARGIN = 1, FUN = mean)
+avg_dist_basal_fap <- apply(nndist_basal_fap, MARGIN = 1, FUN = mean)
+
+avg_dist_classical_fap <- as.data.frame(avg_dist_classical_fap)
+avg_dist_classical_fap$classification <- rep("Classical", nrow(avg_dist_classical_fap))
+avg_dist_basal_fap <- as.data.frame(avg_dist_basal_fap)
+avg_dist_basal_fap$classification <- rep("Basal", nrow(avg_dist_basal_fap))
+colnames(avg_dist_basal_fap) <- c("nn_dist","classification")
+colnames(avg_dist_classical_fap) <- c("nn_dist","classification")
+total_df <- rbind(avg_dist_classical_fap, avg_dist_basal_fap)
+
+# avg_nndist_classical_fap <- median(nndist_classical_fap)
+# avg_nndist_basal_fap <- median(nndist_basal_fap)
+# print(avg_nndist_classical_fap)
+# print(avg_nndist_basal_fap)
+# 
+# classical_df <- as.data.frame(nndist_classical_fap)
+# classical_df$classification <- rep("Classical", nrow(classical_df))
+# basal_df <- as.data.frame(nndist_basal_fap)
+# basal_df$classification <- rep("Basal", nrow(basal_df))
+# colnames(basal_df) <- c("nn_dist","classification")
+# colnames(classical_df) <- c("nn_dist","classification")
+# total_df <- rbind(classical_df, basal_df)
+
+# ggplot(total_df, aes(x=classification, y=nn_dist, fill=classification)) +
+#   geom_violin(trim=TRUE)+
+#   geom_boxplot(width = 0.2) +
+#   scale_fill_manual(values = c("orange","blue")) +
+#   theme_classic() +
+#   xlab("Tumor Cell Subtype") +
+#   ylab("Standardized Nearest Neighbor Distance To Fap-Positive CAFs") +
+#   #ylim(0, 0.3) + 
+#   theme(axis.text.y = element_text(size=12),
+#         axis.title.y =element_text(size=8)) +
+#   stat_compare_means(method = "wilcox.test", label.x.npc = "centre")
+print(median(avg_dist_basal_fap$nn_dist))
+print(median(avg_dist_classical_fap$nn_dist))
+
+ggplot(total_df, aes(x=classification, y=nn_dist, fill=classification)) +
+  geom_violin(trim=TRUE)+
+  geom_boxplot(width = 0.1) +
+  scale_fill_manual(values = c("orange","blue")) +
+  theme_classic() +
+  xlab("Tumor Cell Subtype") +
+  ylab("Average Nearest Neighbor Distance (k 1:10) To Fap-Positive CAFs") +
+  #ylim(0, 0.3) + 
+  theme(axis.text.y = element_text(size=12),
+        axis.title.y =element_text(size=8)) +
+  stat_compare_means(method = "wilcox.test", label.x.npc = "centre")
+
+
+```
+
+
+#pcfcross analysis
+```{r}
+
+test <- pcfcross(ppp, i = "Basal", j = "FAP_positive_caf", r = 0:300)
+plot(test)
+test2 <- pcfcross(ppp, i = "Basal", j = "FAP_negative_caf", r = 0:300)
+plot(test2)
+test3 <- pcfcross(ppp, i = "Classical", j = "FAP_positive_caf", r = 0:300)
+plot(test3)
+test4 <- pcfcross(ppp, i = "Classical", j = "FAP_negative_caf", r = 0:300)
+plot(test4)
+```
+
+#nnd analysis - basal and classical vs fap
+```{r}
+set.seed(1)
+
+ppp <- ppp(x=malignant_cases@meta.data$CenterX_global_px, y = malignant_cases@meta.data$CenterY_global_px, xrange = range(malignant_cases@meta.data$CenterX_global_px), yrange = range(malignant_cases@meta.data$CenterY_global_px), marks = factor(malignant_cases@meta.data$level_3B_clusters))
+
+ppp <- ppp[,!duplicated(ppp)]
+
+# # Subset the point pattern for marks "a", "b", and "c"
+ppp_classical <- subset(ppp, marks == "Classical")
+ppp_basal <- subset(ppp, marks == "Basal")
+ppp_fapneg <- subset(ppp, marks == "FAP_negative_caf")
+ppp_fappos <- subset(ppp, marks == "FAP_positive_caf")
+
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "c"
+nn_classical_fap <- nncross(ppp_classical, ppp_fappos, k=1:100)
+nndist_classical_fap <- nn_classical_fap[,1:100]
+nn_classical_fapneg <- nncross(ppp_classical, ppp_fapneg, k=1:100)
+nndist_classical_fapneg <- nn_classical_fapneg[,1:100]
+# Find the nearest neighbor distances from points with mark "a" to points with mark "b"
+nn_basal_fap <- nncross(ppp_basal, ppp_fappos, k=1:100)
+nndist_basal_fap <- nn_basal_fap[,1:100]
+nn_basal_fapneg <- nncross(ppp_basal, ppp_fapneg, k=1:100)
+nndist_basal_fapneg <- nn_basal_fapneg[,1:100]
+
+# Compute the average nearest neighbor distance for each pair of marks
+avg_dist_classical_fap <- apply(nndist_classical_fap, MARGIN = 1, FUN = mean)
+avg_dist_classical_fapneg <- apply(nndist_classical_fapneg, MARGIN = 1, FUN = mean)
+avg_dist_basal_fap <- apply(nndist_basal_fap, MARGIN = 1, FUN = mean)
+avg_dist_basal_fapneg <- apply(nndist_basal_fapneg, MARGIN = 1, FUN = mean)
+
+
+avg_dist_classical_fap <- as.data.frame(avg_dist_classical_fap)
+avg_dist_classical_fapneg <- as.data.frame(avg_dist_classical_fapneg)
+avg_dist_basal_fap <- as.data.frame(avg_dist_basal_fap)
+avg_dist_basal_fapneg <- as.data.frame(avg_dist_basal_fapneg)
+
+avg_dist_classical_fap$classification <- rep("FAP-positive", nrow(avg_dist_classical_fap))
+avg_dist_classical_fapneg$classification <- rep("FAP-negative", nrow(avg_dist_classical_fapneg))
+avg_dist_basal_fap$classification <- rep("FAP-positive", nrow(avg_dist_basal_fap))
+avg_dist_basal_fapneg$classification <- rep("FAP-negative", nrow(avg_dist_basal_fapneg))
+
+
+colnames(avg_dist_basal_fap) <- c("nn_dist","classification")
+colnames(avg_dist_basal_fapneg) <- c("nn_dist","classification")
+colnames(avg_dist_classical_fap) <- c("nn_dist","classification")
+colnames(avg_dist_classical_fapneg) <- c("nn_dist","classification")
+classical_fap_df <- rbind(avg_dist_classical_fap, avg_dist_classical_fapneg)
+basal_fap_df <- rbind(avg_dist_basal_fap, avg_dist_basal_fapneg)
+
+print(median(avg_dist_basal_fap$nn_dist))
+print(median(avg_dist_basal_fapneg$nn_dist))
+print(median(avg_dist_classical_fap$nn_dist))
+print(median(avg_dist_classical_fapneg$nn_dist))
+
+ggplot(classical_fap_df, aes(x=classification, y=nn_dist, fill=classification)) +
+  geom_violin(trim=TRUE)+
+  geom_boxplot(width = 0.1) +
+  scale_fill_manual(values = c("red","green")) +
+  theme_classic() +
+  xlab("Fibroblast Subtype") +
+  ylab("Average Nearest Neighbor Distance (k 1:10) To CAFs from Classical Tumor Cells") +
+  #ylim(0, 0.3) + 
+  theme(axis.text.y = element_text(size=12),
+        axis.title.y =element_text(size=7)) +
+  stat_compare_means(method = "wilcox.test", label.x.npc = "centre")
+
+ggplot(basal_fap_df, aes(x=classification, y=nn_dist, fill=classification)) +
+  geom_violin(trim=TRUE)+
+  geom_boxplot(width = 0.1) +
+  scale_fill_manual(values = c("red","green")) +
+  theme_classic() +
+  xlab("Fibroblast Subtype") +
+  ylab("Average Nearest Neighbor Distance (k 1:10) To CAFs from Basal Tumor Cells") +
+  #ylim(0, 0.3) + 
+  theme(axis.text.y = element_text(size=12),
+        axis.title.y =element_text(size=7)) +
+  stat_compare_means(method = "wilcox.test", label.x.npc = "centre")
+
+
+
+# gcross1 <- Gcross(ppp, i = "Basal", j = "FAP_positive_caf", r = c(0:100))
+# plot(gcross1)
+# gcross2 <- Gcross(ppp, i = "Basal", j = "FAP_negative_caf", r = c(0:100))
+# plot(gcross2)
+# gcross2.5 <- Gcross(ppp, i = "Basal", j = "Basal", r = c(0:100))
+# plot(gcross2.5)
+# gcross3 <- Gcross(ppp, i = "Classical", j = "FAP_positive_caf", r = c(0:100))
+# plot(gcross3)
+# gcross4 <- Gcross(ppp, i = "Classical", j = "FAP_negative_caf", r = c(0:100))
+# plot(gcross4)
+# gcross5 <- Gcross(ppp, i = "CD8.T.Cell", j = "B.Cell", r = c(0:100))
+# plot(gcross5)
+# gcross6 <- Gcross(ppp, i = "CD8.T.Cell", j = "iCAF", r = c(0:100))
+# plot(gcross6)
+# gcross7 <- Gcross(ppp, i = "B.Cell", j = "iCAF", r = c(0:100))
+# plot(gcross7)
+
+```
+```{r}
+
+ppp <- ppp(x=malignant_cases@meta.data$CenterX_global_px, y = malignant_cases@meta.data$CenterY_global_px, xrange = range(malignant_cases@meta.data$CenterX_global_px), yrange = range(malignant_cases@meta.data$CenterY_global_px), marks = factor(malignant_cases@meta.data$level_3B_clusters))
+
+ppp <- ppp[,!duplicated(ppp)]
+
+# # Subset the point pattern for marks "a", "b", and "c"
+ppp_classical <- subset(ppp, marks == "CD8.T.Cell")
+ppp_basal <- subset(ppp, marks == "Classical")
+ppp_fapneg <- subset(ppp, marks == "FAP_negative_caf")
+ppp_fappos <- subset(ppp, marks == "FAP_positive_caf")
+
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "c"
+nn_classical_fap <- nncross(ppp_classical, ppp_fappos, k=1:100)
+nndist_classical_fap <- nn_classical_fap[,1:100]
+nn_classical_fapneg <- nncross(ppp_classical, ppp_fapneg, k=1:100)
+nndist_classical_fapneg <- nn_classical_fapneg[,1:100]
+# Find the nearest neighbor distances from points with mark "a" to points with mark "b"
+nn_basal_fap <- nncross(ppp_basal, ppp_fappos, k=1:100)
+nndist_basal_fap <- nn_basal_fap[,1:100]
+nn_basal_fapneg <- nncross(ppp_basal, ppp_fapneg, k=1:100)
+nndist_basal_fapneg <- nn_basal_fapneg[,1:100]
+
+# Compute the average nearest neighbor distance for each pair of marks
+avg_dist_classical_fap <- apply(nndist_classical_fap, MARGIN = 1, FUN = mean)
+avg_dist_classical_fapneg <- apply(nndist_classical_fapneg, MARGIN = 1, FUN = mean)
+avg_dist_basal_fap <- apply(nndist_basal_fap, MARGIN = 1, FUN = mean)
+avg_dist_basal_fapneg <- apply(nndist_basal_fapneg, MARGIN = 1, FUN = mean)
+
+
+avg_dist_classical_fap <- as.data.frame(avg_dist_classical_fap)
+avg_dist_classical_fapneg <- as.data.frame(avg_dist_classical_fapneg)
+avg_dist_basal_fap <- as.data.frame(avg_dist_basal_fap)
+avg_dist_basal_fapneg <- as.data.frame(avg_dist_basal_fapneg)
+
+avg_dist_classical_fap$classification <- rep("FAP-positive", nrow(avg_dist_classical_fap))
+avg_dist_classical_fapneg$classification <- rep("FAP-negative", nrow(avg_dist_classical_fapneg))
+avg_dist_basal_fap$classification <- rep("FAP-positive", nrow(avg_dist_basal_fap))
+avg_dist_basal_fapneg$classification <- rep("FAP-negative", nrow(avg_dist_basal_fapneg))
+
+
+colnames(avg_dist_basal_fap) <- c("nn_dist","classification")
+colnames(avg_dist_basal_fapneg) <- c("nn_dist","classification")
+colnames(avg_dist_classical_fap) <- c("nn_dist","classification")
+colnames(avg_dist_classical_fapneg) <- c("nn_dist","classification")
+classical_fap_df <- rbind(avg_dist_classical_fap, avg_dist_classical_fapneg)
+basal_fap_df <- rbind(avg_dist_basal_fap, avg_dist_basal_fapneg)
+
+print(median(avg_dist_basal_fap$nn_dist))
+print(median(avg_dist_basal_fapneg$nn_dist))
+print(median(avg_dist_classical_fap$nn_dist))
+print(median(avg_dist_classical_fapneg$nn_dist))
+
+ggplot(classical_fap_df, aes(x=classification, y=nn_dist, fill=classification)) +
+  geom_violin(trim=TRUE)+
+  geom_boxplot(width = 0.1) +
+  scale_fill_manual(values = c("red","green")) +
+  theme_classic() +
+  xlab("Fibroblast Subtype") +
+  ylab("Average Nearest Neighbor Distance (k 1:10) To CAFs from Classical Tumor Cells") +
+  #ylim(0, 0.3) + 
+  theme(axis.text.y = element_text(size=12),
+        axis.title.y =element_text(size=7)) +
+  stat_compare_means(method = "wilcox.test", label.x.npc = "centre")
+
+ggplot(basal_fap_df, aes(x=classification, y=nn_dist, fill=classification)) +
+  geom_violin(trim=TRUE)+
+  geom_boxplot(width = 0.1) +
+  scale_fill_manual(values = c("red","green")) +
+  theme_classic() +
+  xlab("Fibroblast Subtype") +
+  ylab("Average Nearest Neighbor Distance (k 1:10) To CAFs from Basal Tumor Cells") +
+  #ylim(0, 0.3) + 
+  theme(axis.text.y = element_text(size=12),
+        axis.title.y =element_text(size=7)) +
+  stat_compare_means(method = "wilcox.test", label.x.npc = "centre")
+
+```
+
+
+#ten nearest neighbors analysis
+```{r}
+
+# Number of nearest neighbors to consider
+k <- 10
+
+# Find the indices of the k-nearest neighbors for each point
+nn_indices <- nnwhich(ppp, k = 1:k)
+
+# Initialize a list to store the results
+results <- vector("list", npoints(ppp))
+
+# Iterate through each point and get its mark and the marks of its k-nearest neighbors
+for (i in 1:npoints(ppp)) {
+  point_mark <- marks(ppp)[i]
+  neighbor_marks <- marks(ppp)[nn_indices[i, ]]
+  results[[i]] <- list(point_mark = point_mark, neighbor_marks = neighbor_marks)
+}
+
+# Count the occurrences of mark 'b' in the 10 nearest neighbors for each point of mark 'a'
+fap_counts <- numeric(npoints(ppp))
+
+for (i in 1:npoints(ppp)) {
+  if (results[[i]]$point_mark == "Strong_Basal") {
+    fap_counts[i] <- sum(results[[i]]$neighbor_marks == "FAP_positive_caf")
+  } else {
+    fap_counts[i] <- NA  # Ignore points that are not of mark 'a'
+  }
+}
+
+# Remove NA values
+fap_counts <- fap_counts[!is.na(fap_counts)]
+
+# Create a data frame for plotting
+df1 <- data.frame(fap_counts = fap_counts)
+df1$classification <- rep("Basal",nrow(df1))
+
+for (i in 1:npoints(ppp)) {
+  if (results[[i]]$point_mark == "Strong_Classical") {
+    fap_counts[i] <- sum(results[[i]]$neighbor_marks == "FAP_positive_caf")
+  } else {
+    fap_counts[i] <- NA  # Ignore points that are not of mark 'a'
+  }
+}
+
+# Remove NA values
+fap_counts <- fap_counts[!is.na(fap_counts)]
+
+# Create a data frame for plotting
+df2 <- data.frame(fap_counts = fap_counts)
+df2$classification <- rep("Classical",nrow(df2))
+
+total_df <- rbind(df1, df2)
+
+# Plot the distribution using a violin plot
+ggplot(total_df, aes(x = classification, y = fap_counts)) +
+  geom_violin(trim = FALSE) +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  labs(title = "Distribution of Count of Fap+ CAF Neighbors",
+       x = "Basal Cells",
+       y = "Count of FAP+ Neighbors within 10 Nearest Neighbors") +
+  theme_minimal() +
+  stat_compare_means(method = "wilcox.test")
+
+ggplot(total_df, aes(x=fap_counts, color=classification)) +
+  geom_histogram(fill="white", alpha=0.5, position="identity") +
+  theme_classic()
+
+
+# Load the necessary packages
+table <- marktable(ppp, N = 10)
+
+
+# Number of nearest neighbors to consider
+k <- 10
+
+# Find the indices of the k-nearest neighbors for each point
+nn_indices <- nnwhich(ppp, k = 1:k)
+
+# Initialize a list to store the results
+results <- vector("list", npoints(ppp))
+
+# Iterate through each point and get its mark and the marks of its k-nearest neighbors
+for (i in 1:npoints(ppp)) {
+  point_mark <- marks(ppp)[i]
+  neighbor_marks <- marks(ppp)[nn_indices[i, ]]
+  results[[i]] <- list(point_mark = point_mark, neighbor_marks = neighbor_marks)
+}
+
+# Print the results for the first few points
+for (i in 1:5) {
+  cat("Point", i, "mark:", results[[i]]$point_mark, "\n")
+  cat("Marks of its", k, "nearest neighbors:", results[[i]]$neighbor_marks, "\n\n")
+}
+
+# Load the spatstat package
+library(spatstat)
+
+# Example: Create a point pattern with marks
+# (In practice, you would load your own data)
+# Number of nearest neighbors to consider
+# Load the spatstat package
+library(spatstat)
+
+# Example: Create a point pattern with marks
+# (In practice, you would load your own data)
+set.seed(42)
+ppp_object <- ppp(x = runif(1000), y = runif(1000), 
+                  window = owin(c(0, 1), c(0, 1)),
+                  marks = sample(c("a", "b", "c"), 1000, replace = TRUE))
+
+# Subset the point pattern for marks "a" and "b"
+ppp_x <- subset(ppp_object, marks == "a")
+ppp_y <- subset(ppp_object, marks == "b")
+
+# Check if the subsets are not empty
+if (npoints(ppp_x) == 0) {
+  stop("No points with mark 'a' found.")
+}
+if (npoints(ppp_y) == 0) {
+  stop("No points with mark 'b' found.")
+}
+
+# Number of nearest neighbors to consider
+k <- 10
+
+# Find the k-nearest neighbors for each point in ppp_x
+nn_basal <- nndist(ppp_basal, k = k)
+
+# Initialize a vector to store the count of type 'b' neighbors
+count_fap_neighbors <- numeric(npoints(ppp_basal))
+
+# Loop through each point in ppp_x
+for (i in 1:npoints(ppp_basal)) {
+  # Get the distances to the k-nearest neighbors
+  distances <- nn_basal[i]
+  
+  # Find the indices of the k-nearest neighbors
+  nn_indices <- nnwhich(ppp_basal, k = k)[i]
+  
+  # Count how many of the k-nearest neighbors are of type 'b'
+  count_fap_neighbors[i] <- sum(ppp$marks[nn_indices] == "FAP_positive_caf")
+}
+
+# Calculate the average number of points of mark 'b' within the ten nearest neighbors for each point of mark 'a'
+avg_count_fap_neighbors <- mean(count_fap_neighbors)
+
+
+# Find the k-nearest neighbors for each point in ppp_x
+nn_distances <- nndist(ppp_x, k = k)
+
+# Initialize a vector to store the count of type 'b' neighbors
+count_y_neighbors <- numeric(npoints(ppp_x))
+
+# Loop through each point in ppp_x
+for (i in 1:npoints(ppp_x)) {
+  # Get the distances to the k-nearest neighbors
+  distances <- nn_distances[i, ]
+  
+  # Find the indices of the k-nearest neighbors
+  nn_indices <- nnwhich(ppp_x, k = k)[i, ]
+  
+  # Count how many of the k-nearest neighbors are of type 'b'
+  count_y_neighbors[i] <- sum(ppp_object$marks[nn_indices] == "b")
+}
+
+# Calculate the average number of points of mark 'b' within the ten nearest neighbors for each point of mark 'a'
+avg_count_y_neighbors <- mean(count_y_neighbors)
+
+
+
+# Number of nearest neighbors to consider
+k <- 10
+
+# Find the k-nearest neighbors for each point in ppp_x
+
+nn_classical_fap <- nncross(ppp_classical_standardized, ppp_fap_standardized, k =10)
+nn_basal_fap <- nncross(ppp_basal_standardized, ppp_fap_standardized, k = 10)
+
+
+# Count how many of the k-nearest neighbors have the mark "b"
+count_mycaf_classical_neighbors <- rowSums(matrix(nn_classical_fap$which <= npoints(ppp_fap), nrow = npoints(ppp_classical), ncol = k))
+count_mycaf_basal_neighbors <- rowSums(matrix(nn_basal_fap$which <= npoints(ppp_fap), nrow = npoints(ppp_basal), ncol = k))
+
+# Create a data frame for plotting
+df <- data.frame(count_mycaf_basal_neighbors = count_mycaf_basal_neighbors)
+
+# Plot the distribution using a violin plot
+ggplot(df, aes(x = factor(1), y = count_mycaf_basal_neighbors)) +
+  geom_violin(trim = FALSE) +
+  geom_jitter(width = 0.1, alpha = 0.5) +
+  labs(title = "Distribution of Count of Type 'b' Neighbors",
+       x = "Type 'a' Points",
+       y = "Count of Type 'b' Neighbors within 10 Nearest Neighbors") +
+  theme_minimal() +
+  stat_compare_means(method = "wilcox.test")
+```
+
+#pseudobulking analysis
+```{r}
+pseudo_full_cohort <- AggregateExpression(full_cohort_norm, assays = "Nanostring", return.seurat = T, group.by = c("patient","level_2B_clusters"))
+
+bulk_de <- FindMarkers(object = pseudo_full_cohort, 
+                       ident.1 = c("PCA80_myCAF","PCA84_myCAF","PCA458_myCAF","PCA80_iCAF","PCA84_iCAF","PCA458_iCAF", "PCA80_Fibroblast","PCA84_Fibroblast","PCA458_Fibroblast"),
+                       ident.2 = c("PCA83_myCAF","PCA397_myCAF","PCA429_myCAF","PCA83_iCAF","PCA397_iCAF","PCA429_iCAF", "PCA83_Fibroblast","PCA397_Fibroblast","PCA429_Fibroblast","PCA607_myCAF","PCA683_myCAF","PCA705_myCAF","PCA607_iCAF","PCA683_iCAF","PCA705_iCAF", "PCA83_Fibroblast","PCA397_Fibroblast","PCA429_Fibroblast"),
+                       test.use = "DESeq2")
+
+
+```
+#fov-level basal/classical count correlation with fap count
+```{r}
+#subset for only malignant cases
+malignant_cases <- subset(full_cohort_norm, subset = patient != "PCA671")
+
+#get counts for all malignant cell types and then pivot the data frame wider
+malignant_cell_count <- malignant_cases@meta.data %>%
+  group_by(global_fov,level_2B_clusters) %>%
+  summarize(count = n()) %>%
+  pivot_wider(names_from = level_2B_clusters, values_from = count)
+
+#replace all NAs with 0
+malignant_cell_count[is.na(malignant_cell_count)] = 0
+
+cols <- c("Classical" = "blue", "Basal" = "orange")
+ggplot(malignant_cell_count, aes(x = Basal, y = FAP_like)) +
+  geom_point(size = 2) +
+  theme_classic() +
+  #scale_color_manual(values = cols) +
+  stat_cor(method = "pearson")
+
+ggplot(malignant_cell_count, aes(x = Classical, y = FAP_like)) +
+  geom_point(size = 2) +
+  theme_classic() + 
+  #scale_color_manual(values = cols) +
+  stat_cor(method = "pearson")
+```
+
+#fov-level basal/classical bin and fap count comparison
+```{r}
+#subset for only malignant cases
+malignant_cases <- subset(full_cohort_norm, subset = patient != "PCA671")
+
+#get counts for all malignant cell types and then pivot the data frame wider
+malignant_cell_count <- malignant_cases@meta.data %>%
+  group_by(global_fov,level_2B_clusters) %>%
+  summarize(count = n()) %>%
+  pivot_wider(names_from = level_2B_clusters, values_from = count)
+
+#replace all NAs with 0
+malignant_cell_count[is.na(malignant_cell_count)] = 0
+
+#create total caf column
+malignant_cell_count$CAF <- malignant_cell_count$FAP_low + malignant_cell_count$FAP_intermediate + malignant_cell_count$FAP_like
+
+malignant_cell_count$FAP_positive_ratio <- malignant_cell_count$FAP_like/malignant_cell_count$CAF
+
+malignant_cell_count$FAP_negative_ratio <- malignant_cell_count$FAP_low/malignant_cell_count$CAF
+
+#create fov polarity cell column
+malignant_cell_count$fov_polarity <- rep("NA", nrow(malignant_cell_count))
+
+malignant_cell_count$fov_polarity <- ifelse(malignant_cell_count$Classical > malignant_cell_count$Basal, malignant_cell_count$fov_polarity <- "Classical",
+       ifelse(malignant_cell_count$Basal > malignant_cell_count$Classical, malignant_cell_count$fov_polarity <- "Basal", "Co-Expressor"))
+
+
+ggplot(malignant_cell_count, aes(x = fov_polarity, y = FAP_negative_ratio, fill = fov_polarity)) +
+  #geom_violin() +
+  geom_boxplot(width = 0.25) +
+  theme_classic() +
+  scale_fill_manual(values = c("orange","blue","green")) +
+  stat_compare_means(method = "kruskal")
+
+ggplot(malignant_cell_count, aes(x = fov_polarity, y = FAP_positive_ratio, fill = fov_polarity)) +
+  #geom_violin() +
+  geom_boxplot(width = 0.25) +
+  theme_classic() +
+  scale_fill_manual(values = c("orange","blue","green")) +
+  stat_compare_means(method = "kruskal")
+
+
+```
+
+#fov-level basal/classical bin and distance comparison to fap+ caf
+```{r}
+#subset for only malignant cases
+malignant_cases <- subset(full_cohort_norm, subset = patient != "PCA671")
+malignant_tumor <- subset(malignant_cases, subset = level_1_clusters == "Tumor")
+malignant_caf <- subset(malignant_cases, subset = level_2B_clusters %in% c("FAP_low","FAP_intermediate","FAP_like"))
+
+ppp_tumor <- ppp(x=malignant_tumor@meta.data$CenterX_global_px, y = malignant_tumor@meta.data$CenterY_global_px, xrange = range(malignant_tumor@meta.data$CenterX_global_px), yrange = range(malignant_tumor@meta.data$CenterY_global_px), marks = factor(malignant_tumor@meta.data$level_3B_clusters))
+
+ppp_caf <- ppp(x=malignant_caf@meta.data$CenterX_global_px, y = malignant_caf@meta.data$CenterY_global_px, xrange = range(malignant_caf@meta.data$CenterX_global_px), yrange = range(malignant_caf@meta.data$CenterY_global_px), marks = factor(malignant_caf@meta.data$level_3B_clusters))
+
+#ppp_tumor <- ppp_tumor[,!duplicated(ppp_tumor)]
+#ppp_caf <- ppp_caf[,!duplicated(ppp_caf)]
+
+# # Subset the point pattern for marks "a", "b", and "c"
+ppp_fappos <- subset(ppp_caf, marks %in% c("FAP_intermediate","FAP_like"))
+ppp_fapneg <- subset(ppp_caf, marks == "FAP_low")
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "c"
+nn_tumor_fap <- nncross(ppp_tumor, ppp_fappos, k=1:100)
+nndist_tumor_fap <- nn_tumor_fap[,1:100]
+
+# Compute the average nearest neighbor distance for each pair of marks
+avg_dist_tumor_fap <- apply(nndist_tumor_fap, MARGIN = 1, FUN = mean)
+avg_dist_tumor_fap <- as.data.frame(avg_dist_tumor_fap)
+
+rownames(avg_dist_tumor_fap) <- rownames(malignant_tumor@meta.data)
+malignant_tumor@meta.data$dist_to_fap <- avg_dist_tumor_fap[,1]
+
+
+#get counts for all malignant cell types and then pivot the data frame wider
+malignant_cell_count <- malignant_tumor@meta.data %>%
+  group_by(global_fov,level_2B_clusters) %>%
+  summarize(count = n()) %>%
+  pivot_wider(names_from = level_2B_clusters, values_from = count)
+
+#replace all NAs with 0
+malignant_cell_count[is.na(malignant_cell_count)] = 0
+
+#create fov polarity cell column
+malignant_cell_count$fov_polarity <- rep("NA", nrow(malignant_cell_count))
+
+malignant_cell_count$fov_polarity <- ifelse(malignant_cell_count$Classical > malignant_cell_count$Basal, malignant_cell_count$fov_polarity <- "Classical",
+       ifelse(malignant_cell_count$Basal > malignant_cell_count$Classical, malignant_cell_count$fov_polarity <- "Basal", "Co-Expressor"))
+
+malignant_cell_count_distance <- malignant_tumor@meta.data %>%
+  group_by(global_fov) %>%
+  summarize(avgdist = mean(dist_to_fap))
+
+malignant_cell_count <- cbind(malignant_cell_count, malignant_cell_count_distance)
+
+ggplot(malignant_cell_count, aes(x = fov_polarity, y = avgdist, fill = fov_polarity)) +
+  #geom_violin() +
+  geom_boxplot(width = 0.25) +
+  theme_classic() +
+  scale_fill_manual(values = c("orange","blue","green")) +
+  stat_compare_means(method = "kruskal")
+
+```
+
+#caf near basal/classical
+```{r}
+#subset for only malignant cases
+malignant_cases <- subset(full_cohort_norm, subset = patient != "PCA671")
+malignant_tumor <- subset(malignant_cases, subset = level_1_clusters == "Tumor")
+malignant_caf <- subset(malignant_cases, subset = level_2B_clusters %in% c("FAP_positive_caf","FAP_negative_caf"))
+
+ppp_tumor <- ppp(x=malignant_tumor@meta.data$CenterX_global_px, y = malignant_tumor@meta.data$CenterY_global_px, xrange = range(malignant_tumor@meta.data$CenterX_global_px), yrange = range(malignant_tumor@meta.data$CenterY_global_px), marks = factor(malignant_tumor@meta.data$level_3B_clusters))
+
+ppp_caf <- ppp(x=malignant_caf@meta.data$CenterX_global_px, y = malignant_caf@meta.data$CenterY_global_px, xrange = range(malignant_caf@meta.data$CenterX_global_px), yrange = range(malignant_caf@meta.data$CenterY_global_px), marks = factor(malignant_caf@meta.data$level_3B_clusters))
+
+#ppp_tumor <- ppp_tumor[,!duplicated(ppp_tumor)]
+#ppp_caf <- ppp_caf[,!duplicated(ppp_caf)]
+
+ppp_classical <- subset(ppp_tumor, marks == "Classical")
+ppp_basal <- subset(ppp_tumor, marks == "Basal")
+
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "c"
+nn_caf_classical <- nncross(ppp_caf, ppp_classical, k=1:10)
+nn_caf_basal <- nncross(ppp_caf, ppp_basal, k=1:10)
+
+nndist_caf_classical <- nn_caf_classical[,1:10]
+nndist_caf_basal <- nn_caf_basal[,1:10]
+
+# Compute the average nearest neighbor distance for each pair of marks
+avg_dist_caf_classical <- apply(nndist_caf_classical, MARGIN = 1, FUN = mean)
+avg_dist_caf_classical <- as.data.frame(avg_dist_caf_classical)
+
+avg_dist_caf_basal <- apply(nndist_caf_basal, MARGIN = 1, FUN = mean)
+avg_dist_caf_basal <- as.data.frame(avg_dist_caf_basal)
+
+avg_dist_caf_tumor <- cbind(avg_dist_caf_classical, avg_dist_caf_basal)
+
+#label cafs as closer to basal or closer to classical
+avg_dist_caf_tumor$caf_label <- rep(NA, nrow(avg_dist_caf_tumor))
+
+avg_dist_caf_tumor$caf_label <- ifelse(avg_dist_caf_tumor$avg_dist_caf_classical < avg_dist_caf_tumor$avg_dist_caf_basal, "Closer_Classical",
+                                       ifelse(avg_dist_caf_tumor$avg_dist_caf_basal < avg_dist_caf_tumor$avg_dist_caf_classical, "Closer_Basal",
+                                              "Equidistant"))
+
+#add new data to caf metadata
+rownames(avg_dist_caf_tumor) <- rownames(malignant_caf@meta.data)
+malignant_caf@meta.data <- cbind(malignant_caf@meta.data, avg_dist_caf_tumor)
+
+
+#insert caf metadata into larger object
+#full_cohort_norm@meta.data$avg_dist_caf_classical <- rep(NA, nrow(full_cohort_norm@meta.data)) 
+#full_cohort_norm@meta.data$avg_dist_caf_basal <- rep(NA, nrow(full_cohort_norm@meta.data)) 
+#full_cohort_norm@meta.data$caf_label <- rep(NA, nrow(full_cohort_norm@meta.data))
+
+#replace metadata
+full_cohort_norm@meta.data$level_3B_clusters[cell_ids %in% rownames(malignant_caf@meta.data)] <- malignant_caf@meta.data$caf_label[match(cell_ids[cell_ids %in% rownames(malignant_caf@meta.data)],rownames(malignant_caf@meta.data))]
+
+
+```
+
+#CellChat analysis with fibroblasts subdivided into closer basal and closer classical
+```{r}
+# Prepare input data for CellChat analysis
+Idents(full_cohort_norm) <- "level_3B_clusters"
+data.input = Seurat::GetAssayData(full_cohort_norm, slot = "data", assay = "Nanostring") # normalized data matrix
+
+meta = data.frame(labels = Seurat::Idents(full_cohort_norm), samples = full_cohort_norm@meta.data$patient, row.names = names(Seurat::Idents(full_cohort_norm))) # manually create a dataframe consisting of the cell labels
+meta$samples <- factor(meta$samples)
+unique(meta$labels) # check the cell labels
+
+# combine_spatial_locs <- function(seurat_object, image_list){
+#   for (i in 1:len(image_list)){
+#     Seurat::GetTissueCoordinates(seurat_object, image = image_list[[]], scale = NULL)
+#   }
+# }
+
+#get spatial locations for all FOVs
+spatial.locs.1 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov", scale = NULL)
+spatial.locs.2 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.2", scale = NULL)
+spatial.locs.3 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.3", scale = NULL)
+spatial.locs.4 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.4", scale = NULL)
+spatial.locs.5 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.5", scale = NULL)
+spatial.locs.6 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.6", scale = NULL)
+spatial.locs.7 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.7", scale = NULL)
+
+spatial.locs = rbind(spatial.locs.1, spatial.locs.2, spatial.locs.3, spatial.locs.4, spatial.locs.5, spatial.locs.6, spatial.locs.7)
+
+rownames(spatial.locs) <- spatial.locs$cell
+spatial.locs$cell <- NULL
+rownames(spatial.locs.1) <- spatial.locs.1$cell
+spatial.locs.1$cell <- NULL
+rownames(spatial.locs.2) <- spatial.locs.2$cell
+spatial.locs.2$cell <- NULL
+rownames(spatial.locs.3) <- spatial.locs.3$cell
+spatial.locs.3$cell <- NULL
+rownames(spatial.locs.4) <- spatial.locs.4$cell
+spatial.locs.4$cell <- NULL
+rownames(spatial.locs.5) <- spatial.locs.5$cell
+spatial.locs.5$cell <- NULL
+rownames(spatial.locs.6) <- spatial.locs.6$cell
+spatial.locs.6$cell <- NULL
+rownames(spatial.locs.7) <- spatial.locs.7$cell
+spatial.locs.7$cell <- NULL
+
+#get spatial factors
+conversion.factor = 0.18
+d = computeCellDistance(spatial.locs.1)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.1 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.2)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.2 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.3)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.3 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.4)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.4 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.5)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.5 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.6)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.6 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.7)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.7 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+#bind all spatial factors together
+spatial.factors <- rbind(spatial.factors.1, spatial.factors.2, spatial.factors.3, spatial.factors.4, spatial.factors.5, spatial.factors.6, spatial.factors.7)
+
+rownames(spatial.factors) <- c("PCA80_PCA83", "PCA84_PCA397", "PCA429", "PCA458_PCA607", "PCA671_PCA80", "PCA671_PCA683", "PCA705")
+
+#create cell chat object
+cellchat <- createCellChat(object = data.input, meta = meta, group.by = "labels",
+                           datatype = "spatial", coordinates = spatial.locs, spatial.factors = spatial.factors)
+
+CellChatDB <- CellChatDB.human # use CellChatDB.human if running on human data
+
+# use a subset of CellChatDB for cell-cell communication analysis
+CellChatDB.use <- subsetDB(CellChatDB) # use Secreted Signaling
+# set the used database in the object
+cellchat@DB <- CellChatDB.use
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
+#future::plan("multisession", workers = 4) 
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+#> The number of highly variable ligand-receptor pairs used for signaling inference is 422
+ 
+# execution.time = Sys.time() - ptm
+# print(as.numeric(execution.time, units = "secs"))
+# 
+# ptm = Sys.time()
+
+#run Cell Chat
+cellchat <- computeCommunProb(cellchat, type = "truncatedMean", trim = 0.1, population.size = FALSE, distance.use = TRUE, interaction.range = 150, scale.distance = 1, contact.dependent = TRUE, contact.range = 10, seed.use = 123)
+
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+cellchat <- computeCommunProbPathway(cellchat)
+cellchat <- aggregateNet(cellchat)
+
+#execution.time = Sys.time() - ptm
+#print(as.numeric(execution.time, units = "secs"))
+#ptm = Sys.time()
+
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat@net$count, vertex.weight = rowSums(cellchat@net$count), weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = rowSums(cellchat@net$weight), weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+
+netVisual_heatmap(cellchat, measure = "count", color.heatmap = "Blues")
+pathways.show <- c("COLLAGEN") 
+# Circle plot
+par(mfrow=c(1,1), xpd=TRUE)
+netVisual_aggregate(cellchat, signaling = pathways.show, layout = "circle")
+
+saveRDS(cellchat, here("./output/CellChat/BTC_cohort_cellchat_object_CAFs_close_to_basal_classical_071724.RDS"))
+```
+
+```{r}
+# (1) show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(cellchat, sources.use = c("Closer_Basal","Closer_Classical"), targets.use = c("Basal","Classical"), remove.isolate = FALSE)
+
+netVisual_bubble(cellchat, sources.use = c("Basal","Classical"), targets.use = c("Closer_Basal","Closer_Classical"), remove.isolate = FALSE)
+
+# netVisual_bubble(cellchat, sources.use = "iCAF", remove.isolate = FALSE)
+# netVisual_bubble(cellchat, sources.use = "B.Cell", remove.isolate = FALSE)
+# netVisual_bubble(cellchat, sources.use = "CD8.T.Cell", remove.isolate = FALSE)
+
+#> Comparing communications on a single object
+netVisual_chord_gene(cellchat, sources.use = "Closer_Basal", targets.use = c("Basal"), lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Closer_Classical", targets.use = c("Basal"), lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Closer_Basal", targets.use = c("Classical"), lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Closer_Classical", targets.use = c("Classical"), lab.cex = 0.5,legend.pos.y = 30)
+
+#comparing communcation at pathway level
+netVisual_chord_gene(cellchat, sources.use = "Closer_Basal", targets.use = c("Basal"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Closer_Classical", targets.use = c("Basal"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Closer_Basal", targets.use = c("Classical"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Closer_Classical", targets.use = c("Classical"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+```
+
+
+#hoodscanR
+```{r}
+#first convert to singlecellexperiment
+tumor_immune_fibroblast <- subset(malignant_cases, subset = level_1_clusters == c("Tumor","Immune","Stroma"))
+
+full_cohort_sc <- as.SingleCellExperiment(tumor_immune_fibroblast)
+
+#coerce to spatial experiment
+full_cohort_spatial <- toSpatialExperiment(full_cohort_sc, spatialCoordsNames = c("CenterX_global_px", "CenterY_global_px"), sample_id = "patient")
+
+#convert to format required for hoodscanR
+full_cohort_spatial <- readHoodData(full_cohort_spatial, anno_col = "level_2B_clusters")
+```
+
+```{r}
+plotTissue(full_cohort_spatial, size = 1.5, alpha = 0.8)
+
+#find nearest neighbors
+fnc <- findNearCells(full_cohort_spatial, k = 100)
+pm <- scanHoods(fnc$distance)
+hoods <- mergeByGroup(pm, fnc$cells) #merge probabilities by cell types of 100 nearest cells
+
+#plot probability matrix
+plotHoodMat(hoods, n = 10, hm_height = 5)
+
+#merge results with spatial experiment object for further analysis
+full_cohort_spatial <- mergeHoodSpe(full_cohort_spatial, hoods)
+
+#calculate entropy and perplexity
+full_cohort_spatial <- calcMetrics(full_cohort_spatial, pm_cols = colnames(hoods))
+
+#plot neighborhood colocalization analysis
+plotColocal(full_cohort_spatial, pm_cols = colnames(hoods))
+
+#cluster cells by neighborhood
+full_cohort_spatial <- clustByHood(full_cohort_spatial, pm_cols = colnames(hoods), k = 10)
+
+plotProbDist(full_cohort_spatial, pm_cols = colnames(hoods), by_cluster = TRUE, plot_all = TRUE, show_clusters = as.character(seq(10)))
+```
+
+#near-far basal/classical analysis
+```{r}
+#create class "CAF"
+
+Idents(full_cohort_norm) <- "level_2_clusters"
+
+caf_cells <- WhichCells(full_cohort_norm, idents = c("myCAF","iCAF","Fibroblast"))
+
+# Assign 'FAP+ve' and 'FAP-ve' statuses to mycaf cells
+full_cohort_norm@meta.data$level_2B_clusters[rownames(full_cohort_norm@meta.data) %in% caf_cells] <- "CAF"
+full_cohort_norm@meta.data$level_3B_clusters[rownames(full_cohort_norm@meta.data) %in% caf_cells] <- "CAF"
+full_cohort_norm@meta.data$level_3C_clusters[rownames(full_cohort_norm@meta.data) %in% caf_cells] <- "CAF"
+
+malignant_cases <- subset(full_cohort_norm, subset = patient != "PCA671")
+
+ppp <- ppp(x=malignant_cases@meta.data$CenterX_global_px, y = malignant_cases@meta.data$CenterY_global_px, xrange = range(malignant_cases@meta.data$CenterX_global_px), yrange = range(malignant_cases@meta.data$CenterY_global_px), marks = factor(malignant_cases@meta.data$level_3B_clusters))
+
+ppp <- ppp[,!duplicated(ppp)]
+
+# # Subset the point pattern for marks "a", "b", and "c"
+ppp_classical <- subset(ppp, marks == "Classical")
+ppp_basal <- subset(ppp, marks == "Basal")
+ppp_caf <- subset(ppp, marks == "CAF")
+
+caf_basal_dist <- nncross(ppp_caf, ppp_basal, k = 1:10)
+caf_classical_dist <- nncross(ppp_caf, ppp_classical, k = 1:10)
+
+avg_caf_basal_dist <- apply(caf_basal_dist, MARGIN = 1, FUN = mean)
+avg_caf_classical_dist <- caf_classical_dist %>%
+  apply(MARGIN = 1, FUN = mean) %>%
+  as.data.frame()
+
+avg_dist_classical_fap <- as.data.frame(avg_dist_classical_fap)
+avg_dist_classical_fap$classification <- rep("Classical", nrow(avg_dist_classical_fap))
+avg_dist_basal_fap <- as.data.frame(avg_dist_basal_fap)
+avg_dist_basal_fap$classification <- rep("Basal", nrow(avg_dist_basal_fap))
+colnames(avg_dist_basal_fap) <- c("nn_dist","classification")
+colnames(avg_dist_classical_fap) <- c("nn_dist","classification")
+total_df <- rbind(avg_dist_classical_fap, avg_dist_basal_fap)
+```
+
+#Cell distance analysis with Kcross
+```{r}
+# test <- markconnect(ppp, i = "FAP_positive_caf", j = "Basal", r=c(0:200), normalize = TRUE) #memory intensive and slow
+# plot(test)
+# test <- markconnect(ppp, i = "FAP_positive_caf", j = "Classical", r=c(0:200), normalize = TRUE) #memory intensive and slow
+# plot(test)
+# test <- markconnect(ppp, i = "Classical", j = "Classical", correction = "Ripley", r=c(0:200), normalize = TRUE) #memory intensive and slow
+# plot(test)
+# 
+# test2 <- Kcross(ppp, i = "Basal", j = "FAP_positive_mycaf", r=c(0:100))
+# plot(test2)
+# test3 <- Kcross(ppp, i = "Classical", j = "FAP_positive_mycaf")
+# plot(test3)
+# 
+# test4 <- pcfcross(ppp, i = "Basal", j = "FAP_positive_mycaf", r=c(0:100))
+# plot(test4)
+# test5 <- pcfcross(ppp, i = "FAP_positive_mycaf", j = "Basal", r=c(0:100))
+# plot(test5)
+# test5 <- pcfcross(ppp, i = "Classical", j = "FAP_positive_mycaf")
+# plot(test5)
+# test6 <- pcfcross(ppp, i = "Basal", j = "FAP_negative_mycaf", r=c(0:100))
+# plot(test6)
+# test7 <- pcfcross(ppp, i = "Classical", j = "FAP_negative_mycaf", r=c(0:50))
+# plot(test7)
+# test7 <- pcfcross(ppp, i = "Classical", j = "Classical", r=c(0:50))
+# plot(test7)
+# 
+# 
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "c"
+nn_fap_classical <- nncross(ppp_fap, ppp_classical)
+nndist_fap_classical <- nn_fap_classical$dist
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "b"
+nn_fap_basal <- nncross(ppp_fap, ppp_basal)
+nndist_fap_basal <- nn_fap_basal$dist
+
+# Compute the average nearest neighbor distance for each pair of marks
+avg_nndist_fap_classical <- median(nndist_fap_classical)
+avg_nndist_fap_basal <- median(nndist_fap_basal)
+print(avg_nndist_fap_classical)
+print(avg_nndist_fap_basal)
+
+
+
+# Calculate the pairwise distances between points of different marks
+dist_fap_classical <- crossdist(ppp_classical, ppp_fap)
+dist_fap_basal <- crossdist(ppp_basal, ppp_fap)
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "c"
+
+# Find the nearest neighbor distances from points with mark "a" to points with mark "b"
+nn_fap_basal <- apply(dist_fap_basal, 1, min)
+
+# Compute the average nearest neighbor distance for each pair of marks
+avg_nndist_a_c <- mean(nndist_a_c)
+avg_nn_fap_basal <- mean(nn_fap_basal)
+
+# Print the results
+cat("Average nearest neighbor distance from points with mark 'a' to points with mark 'c':", avg_nndist_a_c, "\n")
+cat("Average nearest neighbor distance from points with mark 'a' to points with mark 'b':", avg_nndist_a_b, "\n")
+
+```
+#review spatial data for PCA80 only
+```{r}
+Idents(full_cohort_norm) <- full_cohort_norm@meta.data$level_2B_clusters
+#crop to view whole tumor
+options(future.globals.maxSize = 4000 * 1024^4) #set the futures to 2 GB so the seurat objects can be successfully merged
+
+#set color identities
+cluster_colors <- c(
+  "T.Cell" = "#FFFF00",
+  "Classical" = "#3399FF",
+  "Myeloid" = "#993300",
+  "Co-Expressor" = "#33FF00",
+  "B/Plasma" = "#9933FF",
+  "NK" = "#FFCC00",
+  "FAP_negative_caf" = "#FFCCFF",
+  "FAP_positive_caf" = "#CC0099",
+  "Basal" = "#FF9933",
+  "Endothelial.Cell" = "#FF0000",
+  "iCAF" = "#FFFCCC",
+  "Mesenchymal.Cell" = "#99CCCC",
+  "Islets" = "#00FFFF",
+  "Acinar.Cell" = "#666666"
+)
+
+PCA80_crop <- Crop(full_cohort_norm[["fov.5"]], x = c(80000, 150000), y = c(0, 63000))
+full_cohort_norm[["PCA80"]] <- PCA80_crop
+ImageDimPlot(full_cohort_norm, fov = "PCA80",  axes = TRUE)
+
+#crop to view subset of tumor
+PCA80_crop_small <- Crop(full_cohort_norm[["fov.5"]], x = c(100000, 110000), y = c(20000, 30000))
+full_cohort_norm[["PCA80_small"]] <- PCA80_crop_small
+DefaultBoundary(full_cohort_norm[["PCA80_small"]]) <- "segmentation"
+ImageDimPlot(full_cohort_norm, fov = "PCA80_small",  axes = TRUE, size = 1.5)
+```
+#review spatial data for PCA83 only
+```{r}
+#no need to crop as "fov" represents PCA83
+ImageDimPlot(full_cohort_norm, fov = "fov",  axes = TRUE, cols = cluster_colors, nmols = 10000)
+
+#crop to view subset of tumor
+PCA83_crop_small <- Crop(full_cohort_norm[["fov"]], x = c(25000, 35000), y = c(50000, 60000))
+full_cohort_norm[["PCA83_small"]] <- PCA83_crop_small
+DefaultBoundary(full_cohort_norm[["PCA83_small"]]) <- "segmentation"
+ImageDimPlot(full_cohort_norm, fov = "PCA83_small",  cols = cluster_colors, axes = TRUE, size = 1.5)
+```
+
+#review spatial data for PCA84 only
+```{r}
+#crop to view whole tumor
+PCA84_crop <- Crop(full_cohort_norm[["fov.2"]], x = c(55000, 150000), y = c(0, 63000))
+full_cohort_norm[["PCA84"]] <- PCA84_crop
+ImageDimPlot(full_cohort_norm, fov = "PCA84",  cols = cluster_colors, axes = TRUE, nmols = 10000)
+
+#crop to view subset of tumor
+PCA84_crop_small <- Crop(full_cohort_norm[["fov.2"]], x = c(80000, 90000), y = c(43000, 52000))
+full_cohort_norm[["PCA84_small"]] <- PCA84_crop_small
+DefaultBoundary(full_cohort_norm[["PCA84_small"]]) <- "segmentation"
+ImageDimPlot(full_cohort_norm, fov = "PCA84_small", cols = cluster_colors, axes = TRUE, size = 1.5)
+```
+
+#review spatial data for PCA397 only
+```{r}
+
+Idents(full_cohort_norm) <- "level_2B_clusters"
+
+#crop to view whole tumor
+PCA397_crop <- Crop(full_cohort_norm[["fov.2"]], x = c(0, 50000), y = c(0, 63000))
+full_cohort_norm[["PCA397"]] <- PCA397_crop
+ImageDimPlot(full_cohort_norm, fov = "PCA397", cols = cluster_colors, axes = TRUE, nmols = 10000)
+
+#crop to view subset of tumor
+PCA397_crop_small <- Crop(full_cohort_norm[["fov.2"]], x = c(19000, 29000), y = c(23000, 31000))
+full_cohort_norm[["PCA397_small"]] <- PCA397_crop_small
+DefaultBoundary(full_cohort_norm[["PCA397_small"]]) <- "segmentation"
+ImageDimPlot(full_cohort_norm, fov = "PCA397_small",  cols = cluster_colors, axes = TRUE, size = 1.5)
+#ImageDimPlot(full_cohort_norm, fov = "PCA397_small", group.by = "level_2B_clusters",  axes = TRUE, size = 1.5)
+
+#overlay mIF marker staining on cropped images
+ImageFeaturePlot(full_cohort_norm, fov = "PCA397_small", features = "Max.PanCK")
+ImageFeaturePlot(full_cohort_norm, fov = "PCA397_small", features = "Max.CD45")
+ImageFeaturePlot(full_cohort_norm, fov = "PCA397_small", features = "Max.CD68_CK8_18")
+ImageFeaturePlot(full_cohort_norm, fov = "PCA397_small", features = "FAP")
+```
+
+#review spatial data for PCA429 only
+```{r}
+#no need to crop as "fov.3" represents PCA429
+ImageDimPlot(full_cohort_norm, fov = "fov.3", cols = cluster_colors, axes = TRUE, nmols = 10000)
+
+#crop to view subset of tumor
+PCA429_crop_small <- Crop(full_cohort_norm[["fov.3"]], x = c(25000, 35000), y = c(41000, 55000))
+full_cohort_norm[["PCA429_small"]] <- PCA429_crop_small
+DefaultBoundary(full_cohort_norm[["PCA429_small"]]) <- "segmentation"
+ImageDimPlot(full_cohort_norm, fov = "PCA429_small", cols = cluster_colors, axes = TRUE, size = 1.5)
+```
+
+#review spatial data for PCA458 only
+```{r}
+#crop to view whole tumor
+PCA458_crop <- Crop(full_cohort_norm[["fov.4"]], x = c(90000, 150000), y = c(0, 80000))
+full_cohort_norm[["PCA458"]] <- PCA458_crop
+ImageDimPlot(full_cohort_norm, fov = "PCA458", cols = cluster_colors, axes = TRUE, nmols = 10000)
+
+#crop to view subset of tumor
+PCA458_crop_small <- Crop(full_cohort_norm[["fov.4"]], x = c(123000, 130000), y = c(50000, 56000))
+full_cohort_norm[["PCA458_small"]] <- PCA458_crop_small
+DefaultBoundary(full_cohort_norm[["PCA458_small"]]) <- "segmentation"
+ImageDimPlot(full_cohort_norm, fov = "PCA458_small", cols = cluster_colors, axes = TRUE, size = 1.5)
+
+PCA458_crop_small <- Crop(full_cohort_norm[["fov.4"]], x = c(106000, 110000), y = c(45000, 50000))
+full_cohort_norm[["PCA458_small"]] <- PCA458_crop_small
+DefaultBoundary(full_cohort_norm[["PCA458_small"]]) <- "segmentation"
+ImageDimPlot(full_cohort_norm, fov = "PCA458_small", cols = cluster_colors, axes = TRUE, size = 1.5)
+```
+
+#review spatial data for PCA607 only
+```{r}
+#crop to view whole tumor
+Idents(full_cohort_norm) <- "level_3B_clusters"
+PCA607_crop <- Crop(full_cohort_norm[["fov.4"]], x = c(0, 25000), y = c(0, 41000))
+full_cohort_norm[["PCA607"]] <- PCA607_crop
+ImageDimPlot(full_cohort_norm, fov = "PCA607", cols = cluster_colors, axes = TRUE, nmols = 10000)
+
+#crop to view subset of tumor
+PCA607_crop_small <- Crop(full_cohort_norm[["fov.4"]], x = c(0, 10000), y = c(15000, 21000))
+full_cohort_norm[["PCA607_small"]] <- PCA607_crop_small
+DefaultBoundary(full_cohort_norm[["PCA607_small"]]) <- "segmentation"
+ImageDimPlot(full_cohort_norm, fov = "PCA607_small", cols = cluster_colors, axes = TRUE, size = 1.5)
+ImageFeaturePlot(full_cohort_norm, fov = "PCA607_small", features = "Max.PanCK")
+ImageFeaturePlot(full_cohort_norm, fov = "PCA607_small", features = "FAP")
+```
+
+#review spatial data for PCA671 only
+```{r}
+PCA671_crop <- Crop(full_cohort_norm[["fov.5"]], x = c(0, 27000), y = c(17000, 63000))
+full_cohort_norm[["PCA671"]] <- PCA671_crop
+ImageDimPlot(full_cohort_norm, fov = "PCA671", cols = cluster_colors, axes = TRUE, nmols = 10000)
+
+#crop to view subset of tumor
+PCA671_crop_small <- Crop(full_cohort_norm[["fov.5"]], x = c(0, 10000), y = c(35000, 41000))
+full_cohort_norm[["PCA671_small"]] <- PCA671_crop_small
+DefaultBoundary(full_cohort_norm[["PCA671_small"]]) <- "segmentation"
+ImageDimPlot(full_cohort_norm, fov = "PCA671_small", cols = cluster_colors, axes = TRUE, size = 1.5)
+
+#overlay mIF marker staining on cropped images
+ImageFeaturePlot(full_cohort_norm, fov = "PCA671_small", features = "Max.PanCK")
+ImageFeaturePlot(full_cohort_norm, fov = "PCA671_small", features = "Max.CD45")
+ImageFeaturePlot(full_cohort_norm, fov = "PCA671_small", features = "Max.CD68_CK8_18")
+```
+
+#review spatial data for PCA683 only
+```{r}
+#no need to crop as "fov.6" represents PCA683
+ImageDimPlot(full_cohort_norm, fov = "fov.6", cols = cluster_colors, axes = TRUE, nmols = 10000)
+
+#crop to view subset of tumor
+PCA683_crop_small <- Crop(full_cohort_norm[["fov.6"]], x = c(37000, 46000), y = c(35000, 43000))
+full_cohort_norm[["PCA683_small"]] <- PCA683_crop_small
+DefaultBoundary(full_cohort_norm[["PCA683_small"]]) <- "segmentation"
+ImageDimPlot(full_cohort_norm, fov = "PCA683_small", cols = cluster_colors, axes = TRUE, size = 1.5)
+```
+
+#review spatial data for PCA705 only
+```{r}
+#no need to crop as "fov.7" represents PCA705
+ImageDimPlot(full_cohort_norm, fov = "fov.7", cols = cluster_colors, axes = TRUE, nmols = 10000)
+
+#crop to view subset of tumor
+PCA705_crop_small <- Crop(full_cohort_norm[["fov.7"]], x = c(25000, 35000), y = c(25000, 35000))
+full_cohort_norm[["PCA705_small"]] <- PCA705_crop_small
+DefaultBoundary(full_cohort_norm[["PCA705_small"]]) <- "segmentation"
+ImageDimPlot(full_cohort_norm, fov = "PCA705_small", cols = cluster_colors, axes = TRUE, size = 1.5)
+#ImageDimPlot(full_cohort_norm, fov = "PCA705_small", group.by = "level_1_clusters", axes = TRUE, size = 1.5)
+#ImageDimPlot(full_cohort_norm, fov = "PCA705_small", group.by = "level_2_clusters", axes = TRUE, size = 1.5)
+
+#overlay mIF marker staining on cropped images
+ImageFeaturePlot(full_cohort_norm, fov = "PCA705_small", features = "Max.PanCK")
+ImageFeaturePlot(full_cohort_norm, fov = "PCA705_small", features = "Max.CD45")
+ImageFeaturePlot(full_cohort_norm, fov = "PCA705_small", features = "Max.CD68_CK8_18")
+```
+
+#Section 9 - Run CellChat analysis to study signaling between fap+ fibroblasts and basal cells
+```{r}
+# Prepare input data for CellChat analysis
+Idents(full_cohort_norm) <- "level_3B_clusters"
+data.input = Seurat::GetAssayData(full_cohort_norm, slot = "data", assay = "Nanostring") # normalized data matrix
+
+meta = data.frame(labels = Seurat::Idents(full_cohort_norm), samples = full_cohort_norm@meta.data$patient, row.names = names(Seurat::Idents(full_cohort_norm))) # manually create a dataframe consisting of the cell labels
+meta$samples <- factor(meta$samples)
+unique(meta$labels) # check the cell labels
+
+# combine_spatial_locs <- function(seurat_object, image_list){
+#   for (i in 1:len(image_list)){
+#     Seurat::GetTissueCoordinates(seurat_object, image = image_list[[]], scale = NULL)
+#   }
+# }
+
+#get spatial locations for all FOVs
+spatial.locs.1 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov", scale = NULL)
+spatial.locs.2 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.2", scale = NULL)
+spatial.locs.3 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.3", scale = NULL)
+spatial.locs.4 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.4", scale = NULL)
+spatial.locs.5 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.5", scale = NULL)
+spatial.locs.6 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.6", scale = NULL)
+spatial.locs.7 = Seurat::GetTissueCoordinates(full_cohort_norm, image = "fov.7", scale = NULL)
+
+spatial.locs = rbind(spatial.locs.1, spatial.locs.2, spatial.locs.3, spatial.locs.4, spatial.locs.5, spatial.locs.6, spatial.locs.7)
+
+rownames(spatial.locs) <- spatial.locs$cell
+spatial.locs$cell <- NULL
+rownames(spatial.locs.1) <- spatial.locs.1$cell
+spatial.locs.1$cell <- NULL
+rownames(spatial.locs.2) <- spatial.locs.2$cell
+spatial.locs.2$cell <- NULL
+rownames(spatial.locs.3) <- spatial.locs.3$cell
+spatial.locs.3$cell <- NULL
+rownames(spatial.locs.4) <- spatial.locs.4$cell
+spatial.locs.4$cell <- NULL
+rownames(spatial.locs.5) <- spatial.locs.5$cell
+spatial.locs.5$cell <- NULL
+rownames(spatial.locs.6) <- spatial.locs.6$cell
+spatial.locs.6$cell <- NULL
+rownames(spatial.locs.7) <- spatial.locs.7$cell
+spatial.locs.7$cell <- NULL
+
+#get spatial factors
+conversion.factor = 0.18
+d = computeCellDistance(spatial.locs.1)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.1 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.2)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.2 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.3)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.3 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.4)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.4 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.5)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.5 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.6)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.6 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+d = computeCellDistance(spatial.locs.7)
+spot.size = min(d)*conversion.factor # converting the distance in Pixels to Micrometers
+spatial.factors.7 = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+#bind all spatial factors together
+spatial.factors <- rbind(spatial.factors.1, spatial.factors.2, spatial.factors.3, spatial.factors.4, spatial.factors.5, spatial.factors.6, spatial.factors.7)
+
+rownames(spatial.factors) <- c("PCA80_PCA83", "PCA84_PCA397", "PCA429", "PCA458_PCA607", "PCA671_PCA80", "PCA671_PCA683", "PCA705")
+
+#create cell chat object
+cellchat <- createCellChat(object = data.input, meta = meta, group.by = "labels",
+                           datatype = "spatial", coordinates = spatial.locs, spatial.factors = spatial.factors)
+
+CellChatDB <- CellChatDB.human # use CellChatDB.human if running on human data
+
+# use a subset of CellChatDB for cell-cell communication analysis
+CellChatDB.use <- subsetDB(CellChatDB) # use Secreted Signaling
+# set the used database in the object
+cellchat@DB <- CellChatDB.use
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
+#future::plan("multisession", workers = 4) 
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+#> The number of highly variable ligand-receptor pairs used for signaling inference is 422
+ 
+# execution.time = Sys.time() - ptm
+# print(as.numeric(execution.time, units = "secs"))
+# 
+# ptm = Sys.time()
+```
+
+
+```{r}
+#run Cell Chat
+cellchat <- computeCommunProb(cellchat, type = "truncatedMean", trim = 0.1, population.size = TRUE, distance.use = FALSE, interaction.range = 150, scale.distance = 1, contact.dependent = TRUE, contact.range = 10, seed.use = 123)
+
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+cellchat <- computeCommunProbPathway(cellchat)
+cellchat <- aggregateNet(cellchat)
+
+#execution.time = Sys.time() - ptm
+#print(as.numeric(execution.time, units = "secs"))
+#ptm = Sys.time()
+
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat@net$count, vertex.weight = rowSums(cellchat@net$count), weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = rowSums(cellchat@net$weight), weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+
+netVisual_heatmap(cellchat, measure = "count", color.heatmap = "Blues")
+pathways.show <- c("COLLAGEN") 
+# Circle plot
+par(mfrow=c(1,1), xpd=TRUE)
+netVisual_aggregate(cellchat, signaling = pathways.show, layout = "circle")
+
+saveRDS(cellchat, here("./output/CellChat/BTC_cohort_cellchat_object_071724.RDS"))
+```
+
+
+```{r}
+#View all significant cell-cell signaling pathways
+
+mat <- cellchat@net$weight
+par(mfrow = c(1,2), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = T, edge.weight.max = max(mat), title.name = rownames(mat)[i])
+}
+```
+
+
+```{r}
+# (1) show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(cellchat, sources.use = c("FAP_positive_caf","FAP_negative_caf"), targets.use = c("Basal","Classical"), remove.isolate = FALSE)
+
+netVisual_bubble(cellchat, sources.use = c("Basal","Classical"), targets.use = c("FAP_positive_caf","FAP_negative_caf"), remove.isolate = FALSE)
+
+netVisual_bubble(cellchat, sources.use = "iCAF", remove.isolate = FALSE)
+netVisual_bubble(cellchat, sources.use = "B.Cell", remove.isolate = FALSE)
+netVisual_bubble(cellchat, sources.use = "CD8.T.Cell", remove.isolate = FALSE)
+
+#> Comparing communications on a single object
+netVisual_chord_gene(cellchat, sources.use = "FAP_positive_caf", targets.use = c("Basal"), lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "FAP_negative_caf", targets.use = c("Basal"), lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "FAP_positive_caf", targets.use = c("Classical"), lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "FAP_negative_caf", targets.use = c("Classical"), lab.cex = 0.5,legend.pos.y = 30)
+
+#comparing communcation at pathway level
+netVisual_chord_gene(cellchat, sources.use = "FAP_positive_caf", targets.use = c("Basal"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "FAP_negative_caf", targets.use = c("Basal"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "FAP_positive_caf", targets.use = c("Classical"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "FAP_negative_caf", targets.use = c("Classical"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+```
+
+```{r}
+# (1) show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+netVisual_bubble(cellchat, sources.use = c("Basal","Classical"), targets.use = c("Closer_Classical","Closer_Basal"), remove.isolate = FALSE)
+ggsave("/cristealab/ajordan/projects/BTC_analysis/output/CellChat/tumor_to_fibroblast_bubble_cafs_basal_and_classical.png")
+
+netVisual_bubble(cellchat, sources.use = c("Closer_Basal","Closer_Classical"), targets.use = c("Classical","Basal"), remove.isolate = FALSE)
+ggsave("/cristealab/ajordan/projects/BTC_analysis/output/CellChat/fibroblast_to_tumor_bubble_cafs_basal_and_classical.png")
+
+#> Comparing communications on a single object
+netVisual_chord_gene(cellchat, sources.use = "Basal", targets.use = c("Closer_Classical"), lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Basal", targets.use = c("Closer_Basal"), lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Classical", targets.use = c("Closer_Classical"), lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Classical", targets.use = c("Closer_Basal"), lab.cex = 0.5,legend.pos.y = 30)
+
+#comparing communcation at pathway level
+netVisual_chord_gene(cellchat, sources.use = "Closer_Classical", targets.use = c("Basal"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Closer_Basal", targets.use = c("Basal"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Closer_Classical", targets.use = c("Classical"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+netVisual_chord_gene(cellchat, sources.use = "Closer_Basal", targets.use = c("Classical"), slot = "netP", lab.cex = 0.5,legend.pos.y = 30)
+```
+
+#Section 10 - Run No-Contact Cell-Chat Analysis
+```{r}
+#run Cell Chat
+cellchat <- computeCommunProb(cellchat, type = "triMean", trim = 0.1, population.size = TRUE, distance.use = TRUE, interaction.range = 250, scale.distance = 1, contact.dependent = FALSE, contact.range = 10, seed.use = 123)
+
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+cellchat <- computeCommunProbPathway(cellchat)
+cellchat <- aggregateNet(cellchat)
+
+#execution.time = Sys.time() - ptm
+#print(as.numeric(execution.time, units = "secs"))
+#ptm = Sys.time()
+
+groupSize <- as.numeric(table(cellchat@idents))
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_circle(cellchat@net$count, vertex.weight = rowSums(cellchat@net$count), weight.scale = T, label.edge= F, title.name = "Number of interactions")
+netVisual_circle(cellchat@net$weight, vertex.weight = rowSums(cellchat@net$weight), weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+
+netVisual_heatmap(cellchat, measure = "count", color.heatmap = "Blues")
+pathways.show <- c("TGFb") 
+
+netVisual_aggregate(cellchat, signaling = pathways.show, sample.use = "PCA705", layout = "spatial", edge.width.max = 2, vertex.size.max = 1, alpha.image = 0.2, vertex.label.cex = 0)
+
+# Circle plot
+par(mfrow=c(1,1), xpd=TRUE)
+netVisual_aggregate(cellchat, signaling = pathways.show, layout = "circle")
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
