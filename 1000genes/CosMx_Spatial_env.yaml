@@ -2,6 +2,7 @@ name: cosmx
 channels:
 - conda-forge
 - bioconda
+- r
 - defaults
 dependencies:
 - snakemake
@@ -16,4 +17,9 @@ dependencies:
 - bioconductor-dittoseq
 - r-devtools
 
-# Build conda env and then INSTALL insituttype manually with devtools in R
+- bioconductor-aucell
+- r-ggpubr
+- r-spatstat
+
+# Build conda env and then INSTALL insituttype and CellChat manually with 
+# devtools in R
