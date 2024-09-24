@@ -289,3 +289,78 @@ colnames(level_2_table_fibroblasts) <- c("Cell_Type","Patient","Counts","Fractio
 
 
 
+
+### OUTPUT ALL DATA INTO REQUESTED FORMAT ###
+
+# Initialize a list to store the metrics
+metrics <- list(
+  area.epithelial = NA,
+  area.stroma = NA,
+  area.overall = NA,
+  cells.epithelial = NA,
+  cells.stroma = NA,
+  cells.overall = NA,
+  fraction.cells.tumor = NA,
+  fraction.cells.immune = NA,
+  fraction.cells.fibroblast = NA,
+  fraction.cells.other = NA,
+  density.overall.cd3 = NA,
+  density.overall.cd3cd4 = NA,
+  density.overall.cd3cd8 = NA,
+  density.overall.m1macrophage = NA,
+  density.overall.m2macrophage = NA,
+  density.overall.macrophage = NA,
+  density.overall.cd14 = NA,
+  density.overall.totalimmune = NA,
+  density.overall.totalimmuneprolif = NA,
+  fraction.tumor.basal = NA,
+  fraction.tumor.classical = NA,
+  fraction.tumor.coexpressor = NA,
+  fraction.tumor.prolif = NA,
+  fraction.fibroblast.mycaf = NA,
+  fraction.fibroblast.icaf = NA
+)
+
+# Fill in the metrics from the tables
+metrics$area.epithelial <- level_1_table %>% filter(Cell_Type == "Tumor") %>% pull(Area)
+metrics$area.stroma <- level_1_table %>% filter(Cell_Type == "Stroma") %>% pull(Area)
+metrics$area.overall <- sum(level_1_table$Area)
+
+metrics$cells.epithelial <- level_1_table %>% filter(Cell_Type == "Tumor") %>% pull(Counts)
+metrics$cells.stroma <- level_1_table %>% filter(Cell_Type == "Stroma") %>% pull(Counts)
+metrics$cells.overall <- sum(level_1_table$Counts)
+
+metrics$fraction.cells.tumor <- level_1_table %>% filter(Cell_Type == "Tumor") %>% pull(Fraction)
+metrics$fraction.cells.immune <- level_1_table %>% filter(Cell_Type == "Immune") %>% pull(Fraction)
+metrics$fraction.cells.fibroblast <- level_2_table %>% filter(Cell_Type %in% c("iCAF", "Mesenchymal.Cell", "myCAF")) %>% summarise(Fraction = sum(Fraction)) %>% pull(Fraction)
+metrics$fraction.cells.other <- 1 - (metrics$fraction.cells.tumor + metrics$fraction.cells.immune + metrics$fraction.cells.fibroblast)
+
+# Density metrics (assuming density is given in the tables)
+metrics$density.overall.cd3 <- NA # Not provided in the tables
+metrics$density.overall.cd3cd4 <- NA  # Not provided in the tables
+metrics$density.overall.cd3cd8 <- NA  # Not provided in the tables
+metrics$density.overall.m1macrophage <- level_3_table %>% filter(Cell_Type == "Macrophage.1") %>% pull(Density)
+metrics$density.overall.m2macrophage <- level_3_table %>% filter(Cell_Type == "Macrophage.2") %>% pull(Density)
+metrics$density.overall.macrophage <- level_3_table %>% filter(Cell_Type %in% c("Macrophage.1", "Marcophage.2")) %>% summarise(Density = sum(Density)) %>% pull(Density)
+metrics$density.overall.cd14 <- NA  # Not provided in the tables
+metrics$density.overall.totalimmune <- level_1_table %>% filter(Cell_Type == "Immune") %>% pull(Density)
+metrics$density.overall.totalimmuneprolif <- NA  # Not provided in the tables
+
+# Tumor fractions (assuming these are subtypes of tumor)
+metrics$fraction.tumor.basal <- NA  # Not provided in the tables
+metrics$fraction.tumor.classical <- NA  # Not provided in the tables
+metrics$fraction.tumor.coexpressor <- NA  # Not provided in the tables
+metrics$fraction.tumor.prolif <- NA  # Not provided in the tables
+
+# Fibroblast fractions
+metrics$fraction.fibroblast.mycaf <- level_2_table_fibroblasts %>% filter(Cell_Type == "myCAF") %>% pull(Fraction)
+metrics$fraction.fibroblast.icaf <- level_2_table_fibroblasts %>% filter(Cell_Type == "iCAF") %>% pull(Fraction)
+
+# Convert the list to a data frame
+metrics_df <- data.frame(
+  Metric = names(metrics),
+  Value = unlist(metrics)
+)
+
+# # Write the data frame to a CSV file
+write.csv(metrics_df, "/cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_PCA429_08282024/InSituType/metrics_summary.csv", row.names = FALSE)
