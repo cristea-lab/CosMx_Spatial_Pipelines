@@ -15,7 +15,7 @@ library("dittoSeq")
 #################### COMMAND LINE INPUT #######################
 ###############################################################
 ## Example command-line input: 
-# Rscript insitutype_single_sample_processing_pipeline.R PCA429 /cristealab/ajordan/projects/BTC_analysis/data/processed/cosmx/human/resegmented_data/PCA429 /cristealab/ajordan/projects/BTC_analysis/data/external/insitutype_references/Pancreas.profiles.csv /cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_PCA429_08262024/InSituType 12 14
+# Rscript 3_meta_data_excel_sheet.R PCA429 /cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_PCA429_08282024/InSituType/12_clusters/B_2_semi_sup_insitutype_fully_labeled.rds /cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_PCA429_08282024/InSituType/metrics_summary.csv
 
 
 # Get command-line arguments
@@ -363,4 +363,4 @@ metrics_df <- data.frame(
 )
 
 # # Write the data frame to a CSV file
-write.csv(metrics_df, "/cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_PCA429_08282024/InSituType/metrics_summary.csv", row.names = FALSE)
+write.csv(metrics_df, output_csv, row.names = FALSE)
