@@ -3,6 +3,7 @@ channels:
 - conda-forge
 - bioconda
 - r
+- dnachun
 - defaults
 dependencies:
 - snakemake
@@ -21,5 +22,6 @@ dependencies:
 - r-ggpubr
 - r-spatstat
 
+- r-presto #https://github.com/immunogenomics/presto #FAST wilcoxon test
 # Build conda env and then INSTALL insituttype and CellChat manually with 
 # devtools in R
