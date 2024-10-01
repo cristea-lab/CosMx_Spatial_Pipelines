@@ -25,8 +25,8 @@ args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 1) {
   stop("Please provide one or more file paths as command-line arguments.")
 }
-if (length(args) != 2) {
-    stop("Please double check your input to make sure only 2 command-line inputs are given.")
+if (length(args) != 3) {
+    stop("Please double check your input to make sure only 3 command-line inputs are given.")
 }
 
 

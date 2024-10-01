@@ -5,6 +5,7 @@ def targets(wildcards):
     for sample in config['samples']:
         ls.append(f"outputs/qc/{sample}/A_1_pre_QC_sample.rds")
         ls.append(f"outputs/insitutype/{sample}/A_2_post_QC_and_normalization_20_counts_per_cell.rds")
+        ls.append(f"outputs/metrics/{sample}/metrics_summary.csv")
     return ls
 
 rule all:
