@@ -35,7 +35,7 @@ def ST_insitutype_inputFn(wildcards):
     return tmp
 
 rule ST_insitutype:
-    input: 
+    input:
         unpack(ST_insitutype_inputFn)
     params:
         min_clusters = config['min_clusters'],
@@ -45,11 +45,21 @@ rule ST_insitutype:
         insitutype_profile_ref = config['insitutype_profile_ref'],
         #outdir=lambda wildcards,input,output: os.path.abspath(os.path.dirname(output[0])),
         outdir=lambda wildcards,input,output: os.path.dirname(output[0]),
-    output: 
+    output:
         "outputs/insitutype/{sample}/A_2_post_QC_and_normalization_20_counts_per_cell.rds",
+        #LEN: Try remove hardcoded cluster number
+        "outputs/insitutype/{sample}/12_clusters/B_2_semi_sup_insitutype_fully_labeled.rds",
     	#MORE!
-    shell: 
+    shell:
         """Rscript 2_insitutype_single_sample_processing_pipeline.R {wildcards.sample} {input.rds_path} {input.atomx_path} {params.outdir} {params.insitutype_profile_ref} {params.min_clusters} {params.max_clusters} {params.min_nCount_RNA} {params.max_nFeature_negprobes}"""
+
+rule ST_meta:
+    input:
+        "outputs/insitutype/{sample}/12_clusters/B_2_semi_sup_insitutype_fully_labeled.rds",
+    output:
+        "outputs/metrics/{sample}/metrics_summary.csv"
+    shell:
+        """Rscript 3_meta_data_excel_sheet.R {wildcards.sample} {input} {output}"""
 
 
 #TODO: rule for tumor polarity and fibroblast
