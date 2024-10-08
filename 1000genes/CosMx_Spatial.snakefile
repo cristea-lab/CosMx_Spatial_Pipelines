@@ -6,6 +6,7 @@ def targets(wildcards):
         ls.append(f"outputs/qc/{sample}/A_1_pre_QC_sample.rds")
         ls.append(f"outputs/insitutype/{sample}/A_2_post_QC_and_normalization_20_counts_per_cell.rds")
         ls.append(f"outputs/metrics/{sample}/metrics_summary.csv")
+        ls.append(f"outputs/polarity/{sample}/4_1_plot_correlation_AUCell_scores.jpeg")
     return ls
 
 rule all:
@@ -62,5 +63,15 @@ rule ST_meta:
     shell:
         """Rscript 3_meta_data_excel_sheet.R {wildcards.sample} {input} {output}"""
 
-
-#TODO: rule for tumor polarity and fibroblast
+rule ST_polarity:
+    """Run tumor polarity script to probe tumor fibroblast status"""
+    input:
+        "outputs/insitutype/{sample}/12_clusters/B_2_semi_sup_insitutype_fully_labeled.rds",
+    params:
+        polarity_genesets= config['polarity_genesets'],
+        outdir=lambda wildcards,input,output: os.path.dirname(output[0]),
+    output:
+       "outputs/polarity/{sample}/4_1_plot_correlation_AUCell_scores.jpeg"
+       #MORE!
+    shell:
+        """Rscript 4_tumor_polarity_and_fibrolast_single_sample_processing_pipeline.R {wildcards.sample} {input} {params.polarity_genesets} {params.outdir}"""

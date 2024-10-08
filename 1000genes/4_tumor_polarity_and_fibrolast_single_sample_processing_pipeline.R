@@ -7,7 +7,7 @@ library("dplyr")
 library("SpatialDecon")
 library("InSituType")
 library("tidyverse")
-library("schard")
+#library("schard")
 library("ggplot2")
 library("ggpubr")
 library("here")
@@ -37,21 +37,35 @@ for (file in args) {
 #################### INPUT #######################
 ##################################################
 
+sample_name = args[1]
+print(paste("Input sample name: ", sample_name))
+
+sample_rds_path = args[2]
+print(paste("Input sample fully labeled rds path: ", sample_rds_path))
+
+insitutype_reference_sig_csv_file_path = args[3]
+print(paste("Input inSituType ref sig profile from Nanostring: ", insitutype_reference_sig_csv_file_path))
+
+output_folder_path = args[4]
+print(paste("Input output folder: ", output_folder_path))
+
 #Section 1 - Prepare Data and Genesets for AUCell analysis
-sample_name = "PC429"
+#sample_name = "PC429"
 #load cosmx data
-seurat_obj_norm <- readRDS("/cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_PCA429_08162024/InSituType/PCA429_semi_sup_insitutype_fully_labeled.rds")
+#seurat_obj_norm <- readRDS("/cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_PCA429_08162024/InSituType/PCA429_semi_sup_insitutype_fully_labeled.rds")
+seurat_obj_norm <- readRDS(sample_rds_path)
 
 #select only count data from tumor cells
 malignant <- subset(seurat_obj_norm, subset = level_2_clusters == "Tumor")
 malignant_counts <- GetAssayData(object=malignant, slot="counts")
 
 #load basal and classical gene sets
-genesets <- read.csv("/cristealab/ajordan/projects/BTC_analysis/data/external/gene_sets/basal_classical_and_fibroblast_gene_sets.csv")
+#genesets <- read.csv("/cristealab/ajordan/projects/BTC_analysis/data/external/gene_sets/basal_classical_and_fibroblast_gene_sets.csv")
+genesets <- read.csv(insitutype_reference_sig_csv_file_path)
 #select gene sets that represent basal and classical PDAC cells
 polarity_genesets <- genesets[genesets$gs_name == "Raghavan_scClassical"| genesets$gs_name=="Raghavan_scBasal" | genesets$gs_name == "Raghavan_scIC",]
 
-output_folder_path = "/cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_PCA429_08162024/polarity_and_fibroblast"
+#output_folder_path = "/cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_PCA429_08162024/polarity_and_fibroblast"
 
 
 ###################################################
@@ -94,8 +108,8 @@ polarity_genesets_cosmx <- split(polarity_genesets_cosmx$gene, polarity_genesets
 
 #run AUC
 cells_AUC <- AUCell_calcAUC(polarity_genesets_cosmx, malignant_rankings)
-save(cells_AUC, file="/cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_PCA429_08162024/polarity_and_fibroblast/cells_AUC.RData")
-
+#save(cells_AUC, file="/cristealab/xiwang/Outputs/CosMx_Spatial_Pipelines/output_PCA429_08162024/polarity_and_fibroblast/cells_AUC.RData")
+save(cells_AUC, file=file.path(output_folder_path, "cells_AUC.RData"))
 
 
 #explore AUC thresholds 
@@ -255,7 +269,6 @@ plot[[3]] +
 ggsave(plot_section_4_5_coexpressor_scores_vs_subtype_path)
 
 
-
 ######################################################
 #################### SECTION 5 #######################
 ######################################################
@@ -296,7 +309,6 @@ table(seurat_obj_norm@meta.data$malignant)
 
 #save object with basal and classical labels
 saveRDS(seurat_obj_norm, rds_path_full_cohort_semi_sup_insitutype_tumor_subtype_labels)
-
 
 
 ######################################################
@@ -363,7 +375,19 @@ ggsave(plot_section_8_5_fap_caf_vlnplot)
 # Check the distribution of the feature
 feature_data <- FetchData(caf, vars = "FAP")
 summary(feature_data)
-hist(feature_data, breaks = 6, main = "Histogram of FAP expression", xlab = "Expression Level")
+
+# Extract the 'FAP' column as a numeric vector
+fap_values <- feature_data$FAP
+
+# Ensure that 'fap_values' is numeric
+if (!is.numeric(fap_values)) {
+  stop("The 'FAP' variable is not numeric.")
+}
+
+# Create histogram
+hist(fap_values, breaks = 6, main = "Histogram of FAP expression", xlab = "Expression Level")
+
+#hist(feature_data, breaks = 6, main = "Histogram of FAP expression", xlab = "Expression Level")
 
 fibroblasttable1 <- table(caf@meta.data$level_3B_clusters)
 
@@ -385,4 +409,103 @@ seurat_obj_norm@meta.data$level_3C_clusters[rownames(seurat_obj_norm@meta.data) 
 
 #save seurat object
 
-saveRDS(seurat_obj_norm, here("./data/interim/cosmx/human/seurat_objects/BTC_full_cohort_semi_sup_insitutype_fully_labeled_07152024.RDS"))
+#saveRDS(seurat_obj_norm, here("./data/interim/cosmx/human/seurat_objects/BTC_full_cohort_semi_sup_insitutype_fully_labeled_07152024.RDS"))
+saveRDS(seurat_obj_norm, file=file.path(output_folder_path, "BTC_full_cohort_semi_sup_insitutype_fully_labeled.RDS"))
+
+# Function to run AUCell to identify CAFs close to FAP+ CAFs and generate plots
+identify_fap_positive_cafs <- function(caf, genesets, output_dir, sample_name, full_cohort_norm) {
+    # Ensure output directory exists for plots
+    plots_dir <- file.path(output_dir, "plots")
+    if (!dir.exists(plots_dir)) {
+        dir.create(plots_dir, recursive = TRUE)
+    }
+
+    # Get counts data from the 'caf' Seurat object
+    fibroblast_counts <- GetAssayData(object = caf, slot = "counts")
+
+    # Build AUCell rankings
+    fibroblast_rankings <- AUCell_buildRankings(fibroblast_counts, plotStats = TRUE)
+
+    # Identify fibroblast gene sets for FAP+ CAFs
+    fibroblast_genesets <- genesets[genesets$gs_name == "FAP_pos_caf", ]
+
+    # Filter gene sets to include genes present in the rankings
+    fibroblast_genesets_cosmx <- fibroblast_genesets[fibroblast_genesets$gene %in% rownames(fibroblast_rankings), ]
+
+    # Create list of gene sets
+    fibroblast_genesets_cosmx <- split(fibroblast_genesets_cosmx$gene, fibroblast_genesets_cosmx$gs_name)
+
+    # Run AUCell to calculate AUC scores
+    cells_AUC <- AUCell_calcAUC(fibroblast_genesets_cosmx, fibroblast_rankings)
+
+    # Explore AUC thresholds (plots histogram)
+    # Save the histogram directly to a file
+    histogram_filename <- file.path(plots_dir, paste0(sample_name, "_FAP_CAF_AUC_Histogram.png"))
+    png(filename = histogram_filename, width = 800, height = 600)
+    cells_assignment <- AUCell_exploreThresholds(cells_AUC, plotHist = TRUE, assign = TRUE)
+    dev.off()
+
+    # Extract the gene set name
+    geneSetName <- rownames(cells_AUC)[grep("FAP", rownames(cells_AUC))]
+
+    # Get AUC scores for FAP
+    auc_scores_FAP <- getAUC(cells_AUC)[geneSetName, ]
+
+    # Merge AUC scores into a data frame
+    merged <- data.frame(auc_scores_FAP)
+
+    # Add AUC scores to 'caf' metadata
+    caf@meta.data$FAP_CAF_score <- merged$auc_scores_FAP[match(rownames(caf@meta.data), rownames(merged))]
+
+    # Classify cells based on quantiles of AUC scores
+    caf@meta.data$FAP_CAF_score_level <- ifelse(
+        caf@meta.data$FAP_CAF_score > quantile(caf@meta.data$FAP_CAF_score, probs = 0.75),
+        "FAP_like",
+        ifelse(
+            caf@meta.data$FAP_CAF_score < quantile(caf@meta.data$FAP_CAF_score, probs = 0.25),
+            "FAP_low",
+            "FAP_intermediate"
+        )
+    )
+
+    # Update 'full_cohort_norm' metadata with new classifications
+    cell_ids <- rownames(full_cohort_norm@meta.data)
+    matching_cells <- cell_ids %in% rownames(caf@meta.data)
+    matched_indices <- match(cell_ids[matching_cells], rownames(caf@meta.data))
+
+    full_cohort_norm@meta.data$level_2B_clusters[matching_cells] <- caf@meta.data$FAP_CAF_score_level[matched_indices]
+    full_cohort_norm@meta.data$level_3B_clusters[matching_cells] <- caf@meta.data$FAP_CAF_score_level[matched_indices]
+    full_cohort_norm@meta.data$level_3C_clusters[matching_cells] <- caf@meta.data$FAP_CAF_score_level[matched_indices]
+
+    # Generate dittoBarPlot for Fibroblast Subtype Frequency
+    fibroblast_plot <- dittoBarPlot(
+        object = caf,
+        var = "FAP_CAF_score_level",
+        group.by = "patient",
+        main = "Fibroblast Subtype Frequency"
+    )
+
+    # Save the plot
+    ggsave(
+        filename = file.path(plots_dir, paste0(sample_name, "_Fibroblast_Subtype_Frequency.png")),
+        plot = fibroblast_plot,
+        width = 8,
+        height = 6
+    )
+
+    # Return the updated 'caf' and 'full_cohort_norm' objects
+    return(list(caf = caf, full_cohort_norm = full_cohort_norm))
+}
+
+#LEN: debugging
+#options(error = function() traceback(3))
+
+#CALL identify_fap_positive_cafs
+result <- identify_fap_positive_cafs(caf, genesets, output_folder_path, sample_name, seurat_obj_norm)
+caf <- result$caf
+full_cohort_norm <- result$full_cohort_norm
+
+# Save the updated Seurat objects
+saveRDS(caf, file = file.path(output_folder_path, paste0(sample_name, "_caf_updated.RDS")))
+saveRDS(full_cohort_norm, file = file.path(output_folder_path, paste0(sample_name, "_full_cohort_norm_updated.RDS")))
+

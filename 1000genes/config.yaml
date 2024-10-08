@@ -5,6 +5,8 @@ max_nFeature_negprobes: 0.5
 
 insitutype_profile_ref: /cristealab/ajordan/projects/BTC_analysis/data/external/insitutype_references/Pancreas.profiles.csv
 
+polarity_genesets: /cristealab/ajordan/projects/BTC_analysis/data/external/gene_sets/basal_classical_and_fibroblast_gene_sets.csv
+
 samples:
   PCA429:
     - /cristealab/ajordan/projects/BTC_analysis/data/processed/cosmx/human/resegmented_data/PCA429
