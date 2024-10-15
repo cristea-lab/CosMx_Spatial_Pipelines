@@ -4,6 +4,7 @@ channels:
 - bioconda
 - r
 - dnachun
+- plotly
 - defaults
 dependencies:
 - snakemake
@@ -25,3 +26,11 @@ dependencies:
 - r-presto #https://github.com/immunogenomics/presto #FAST wilcoxon test
 # Build conda env and then INSTALL insituttype and CellChat manually with 
 # devtools in R
+
+#report dependencies
+- plotly_express
+- markdown
+- pyyaml>=4
+- jinja2
+- matplotlib
+- multiqc
