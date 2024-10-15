@@ -13,7 +13,7 @@
     <link href="static/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
 
     <!-- WES Data resources -->
-    <script type="text/plain" id="wes_resources">{{ wes_resources }}</script>
+    <script src="wes_resources.js"></script>
 
     <!-- Multiqc -->
     <script type="text/plain" id="mqc_compressed_plotdata">{{ plot_compressed_json }}</script>
@@ -46,12 +46,14 @@
     <script src="static/vendor/multiqc/js/multiqc_tables.js"></script>
 
     <!--Datatables -->
-    <link rel="stylesheet" type="text/css" href="static/vendor/jquery/jquery.dataTables.min.css">
-    <script src="static/vendor/jquery/jquery.dataTables.min.js"></script>
-    <link rel="stylesheet" type="text/css" href="static/vendor/jquery/select.dataTables.min.css">
-    <script src="static/vendor/jquery/dataTables.select.min.js"></script>
-    <script src="static/vendor/jquery/dataTables.buttons.min.js"></script>
-    <script src="static/vendor/jquery/buttons.html5.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="static/vendor/datatables/jquery.dataTables.min.css">
+    <script src="static/vendor/datatables/jquery.dataTables.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="static/vendor/datatables/select.dataTables.min.css">
+    <script src="static/vendor/datatables/dataTables.select.min.js"></script>
+    <script src="static/vendor/datatables/dataTables.buttons.min.js"></script>
+    <script src="static/vendor/datatables/buttons.html5.min.js"></script>
+    <script src="static/vendor/datatables/dataTables.searchPanes.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="static/vendor/datatables/searchPanes.dataTables.min.css">
 
     <!-- Plotly-->
     <script src="static/vendor/plotly/js/plotly-latest.min.js"></script>
@@ -59,6 +61,9 @@
     <link href="static/css/simple-sidebar.css" rel="stylesheet">
     <link href="static/css/wes.css" rel="stylesheet" type="text/css">
     <link rel="stylesheet" media="print" href="static/css/wes_print.css" />
+
+    <!--Danfo-->
+    <script src="static/vendor/danfo/js/bundle.min.js"></script>
   </head>
 
   <body>
@@ -69,7 +74,7 @@
 	<div class="sidebar-heading">{{ title }}</div>
 	<div class="list-group list-group-flush">
 	  {% for section in sections %}
-	  <a href="#{{ section[0] }}" onclick="toggler('{{ section[0] }}');" class="list-group-item list-group-item-action bg-light">{{ section[1] }}</a>
+	  <a href="#{{ section[0] }}" onclick="sidebarSwitch('{{ section[0] }}');" class="list-group-item list-group-item-action bg-light">{{ section[1] }}</a>
 	  {% endfor %}
 	  <!--<div class="sidebar-sub-heading">WES Level 1</div>-->
 	</div>
@@ -82,10 +87,10 @@
 	<!-- Navbar -->
 	<nav class="navbar navbar-expand-lg navbar-light  border-bottom" id="topbar">
 	  <button class="btn btn-primary" type="button" data-toggle="collapse" data-target="#filterTableContainer" aria-expanded="false" aria-controls="filterTableContainer">
- Show</button>
+      Show&nbsp;Sample&nbsp;Selection&nbsp;Table</button>
           <ul class="nav navbar-nav ml-auto w-100 justify-content-end">
             <li class="nav-item">
-              <a class="navbar-brand" href="#" id="cidc-brand"><img class="img-fluid img-thumbnail" src="static/img/dfci_logo.png" alt="DFCI" style="height:50px"/></a>
+              <a class="navbar-brand" href="#" id="brand"><img class="img-fluid img-thumbnail" src="static/img/dfci_logo.png" alt="DFCI" style="height:50px"/></a>
             </li>
           </ul>
 	</nav>
@@ -95,7 +100,7 @@
 	      <thead>
 	      </thead>
 	    </table>
-	  </div>
+    </div>
 	</div>
 	<!-- #main content sections -->
 	{% for panel in panels %}
@@ -145,6 +150,8 @@
     <script>
       var last_section = '{{ first_section}}';
     </script>
+    <script src="static/js/wes_loadMafs.js"></script>
+    <script src="static/js/build_plots.js"></script>
     <script src="static/js/wes.js"></script>
     <script src="static/js/wes_cohort.js"></script>
   </body>

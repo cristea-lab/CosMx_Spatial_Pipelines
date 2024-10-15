@@ -64,3 +64,11 @@ table.dataTable tr th.select-checkbox.selected::after {
   }
 }
 
+/*datatables button spacing*/
+div.dataTables_length {
+  margin-right: 1em;
+}
+/*datatables searchpanes filters height*/
+div.dtsp-searchPane div.dataTables_scrollBody {
+  height: 130px !important;
+}

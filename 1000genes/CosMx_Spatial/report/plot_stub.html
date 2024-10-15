@@ -3,8 +3,12 @@
   {% if caption %}
   <p class="text-justify">{{ caption }}</p>
   {% endif %}
-  <img class="d-block img-fluid" src="{{ png_file }}" alt="{{ title }}">
+  <div>
+    <button id="{{ id }}_btn" class="btn btn-primary btn-export" type="button" aria-expanded="false">Save Plot as SVG</button>
+    <div id="{{ id }}_plot" class="plotly-graph-div" style="height:100%; width:100%;"></div>
+  </div>
   {% if sub_caption %}
   <p class="text-center font-weight-bold">{{ sub_caption }}</p>
   {% endif %}
 </div>
+

@@ -1,0 +1,16 @@
+<div id="{{ section }}" class="container wes_container" {{ nodisplay }}>
+  <ul class="nav nav-tabs" role="presentation">
+    {%- for tab in tabs -%}
+    {%- if loop.index == 1 -%}
+    <li class="nav-item"><a href="#{{ tab[0] }}" class="nav-link active" data-toggle="tab" role="tab">{{ tab[1] }}</a></li>
+    {% else %}
+    <li class="nav-item"><a href="#{{ tab[0] }}" class="nav-link" data-toggle="tab" role="tab">{{ tab[1] }}</a></li>
+    {%- endif -%}
+    {% endfor %}
+  </ul>
+  <div class="tab-content" id="{{ section }}_tabs">
+  {% for panel in panels %}
+  {{ panel }}
+  {% endfor %}
+  </div>
+</div>

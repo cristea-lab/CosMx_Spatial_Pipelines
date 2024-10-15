@@ -61,14 +61,7 @@ $(function () {
     }
   });
 
-    // Render plots on page load
-    $('.hc-plot.not_rendered:hidden').each(function(){
-	var target = $(this).attr('id');
-	//console.log(target);
-	var max_num = mqc_config['num_datasets_plot_limit'] * 50;
-	plot_graph(target, undefined, max_num);
-    });
-    /* LEN: this fn is broken my replacement is above--
+  // Render plots on page load
   $('.hc-plot.not_rendered:visible:not(.gt_max_num_ds)').each(function(){
     var target = $(this).attr('id');
     // Only one point per dataset, so multiply limit by arbitrary number.
@@ -81,7 +74,6 @@ $(function () {
         }
     }, 50);
   });
-  */
   if($('.hc-plot.not_rendered:visible:not(.gt_max_num_ds)').length == 0){
     $('.mqc_loading_warning').hide();
   }
