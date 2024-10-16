@@ -8,6 +8,8 @@ import os
 import sys
 
 import re
+import random
+import string
 import subprocess
 import yaml
 import json
@@ -90,6 +92,11 @@ def get_prefix(s):
     (prefix, val) = s.split(":")
     return prefix
 
+def get_salt():
+    """Returns a string of 6 random characters"""
+    salt=''.join(random.choice(string.ascii_lowercase) for i in range(6))
+    return salt
+
 #NOTE: this can easily handle csv files too!
 def buildTable(tsv_file, details, jinjaEnv, firstPanel, cssClass=""):
     """Given a tsv file, and a section--converts the tsv file to a table
@@ -115,8 +122,8 @@ def buildTable(tsv_file, details, jinjaEnv, firstPanel, cssClass=""):
     path = "/".join(tsv_file.split("/")[:-1]) #drop the file
     title = prettyprint(fname)
 
-    vals = {'container': fname+'_container',
-            'id': fname, 'title':title, 'class': cssClass}
+    vals = {'container': f"{fname}_{get_salt()}_container",
+            'id': f"{fname}_{get_salt()}", 'title':title, 'class': cssClass}
 
     #Check for a caption
     caption = details.get('caption', None)
@@ -154,7 +161,7 @@ def buildPlot(png_file, details, jinjaEnv, firstPanel):
 
     #make the png file path REALITIVE to the report.html file!
     png_file_relative = "/".join(png_file.split("/")[2:])
-    vals = {'id': fname,
+    vals = {'id': f"{fname}_{get_salt()}",
             'title':title,
             'png_file': png_file_relative
     }
@@ -267,7 +274,7 @@ def buildMqcPlot(plot_file, details, jinjaEnv, firstPanel):
                 
 
 
-        vals = {'id': fname,
+        vals = {'id': f"{fname}_{get_salt()}",
                 'title':title,
                 'plot': html_plot,
         }
@@ -300,7 +307,7 @@ def buildMqcPlot(plot_file, details, jinjaEnv, firstPanel):
         mqcKlass = klass()
         ret = ""
         for s in mqcKlass.sections:
-            vals = {'id': s['name'],
+            vals = {'id': f"{s['name']}_{get_salt()}",
                     'title': s['name'],
                     'plot': s['plot'],
                     'caption': s['description']}
@@ -386,7 +393,7 @@ def buildPlotly(plotly_file, details, jinjaEnv, firstPanel):
         #YUCK! i know it's html content, but it's just one string
         html_plot = """<div id="{iid}_plot" class="plotly-graph-div" style="height:100%; width:100%;"></div>""".format(iid= fname.lower())
 
-    vals = {'id': fname,
+    vals = {'id': f"{fname}_{get_salt()}",
             'title':title,
             'plot': html_plot,
     }
@@ -462,7 +469,7 @@ def stub(stub_file, details, jinjaEnv, firstPanel):
     fname = "_".join(fname.split("_")[1:])
     title = prettyprint(fname)
 
-    vals = {'id': fname,
+    vals = {'id': f"{fname}_{get_salt()}",
             'title':title,
     }
 
