@@ -271,14 +271,15 @@ rule report_auto_render:
     params:
         jinja2_template= src_path + "/report/index.sample.html",
         report_path = output_path + "/report",
-        sections_list = getSections()
+        sections_list = getSections(),
+        title="Summary Report",
     output:
         output_path + "/report/report.html"
     message:
         "REPORT: Generating report"
     group: "report"
     shell:
-        src_path + """/scripts/report.py -d {params.report_path} -s {params.sections_list} -j {params.jinja2_template} -o {output} && cp -r """ + src_path +"""/report/static {params.report_path}"""
+        src_path + """/scripts/report.py -d {params.report_path} -s {params.sections_list} -j {params.jinja2_template} -t "{params.title}" -o {output} && cp -r """ + src_path +"""/report/static {params.report_path}"""
 
 rule report_gzipReport:
     input:
