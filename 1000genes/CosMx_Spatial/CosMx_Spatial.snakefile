@@ -9,7 +9,8 @@ src_path = config.get("src_path", "CosMx_Spatial").rstrip("/")
 def targets(wildcards):
     ls = []
     for sample in config['samples']:
-        ls.append(f"{output_path}/qc/{sample}/A_1_pre_QC_sample.rds")
+        ls.append(f"{output_path}/qc/{sample}/A_1_pre_QC_and_filtered_sample.rds")
+        ls.append(f"{output_path}/umap/{sample}/{sample}_normScaledUMAP.rds")
         ls.append(f"{output_path}/insitutype/{sample}/A_2_post_QC_and_normalization_20_counts_per_cell.rds")
         ls.append(f"{output_path}/metrics/{sample}/metrics_summary.csv")
         ls.append(f"{output_path}/polarity/{sample}/4_1_plot_correlation_AUCell_scores.jpeg")
@@ -31,20 +32,43 @@ rule ST_QC:
     input:
         getAtoMx_path
     params:
+        min_nCount_RNA = config['min_nCount_RNA'],
+        max_nFeature_negprobes = config['max_nFeature_negprobes'],
+
         outdir=lambda wildcards,input,output: os.path.dirname(output[0]),
         script= f"{src_path}/scripts/1_QC_preprocessing_single_sample_pipeline.R",
     output:
-        output_path + "/qc/{sample}/A_1_pre_QC_sample.rds",
+        output_path + "/qc/{sample}/A_1_pre_QC_and_filtered_sample.rds",
         output_path + "/qc/{sample}/1_1_QC_probe_count_histogram.png",
         output_path + "/qc/{sample}/1_2_QC_feature_count_histogram.png",
         output_path + "/qc/{sample}/1_3_QC_negative_probe_count_histogram.png",
     shell:
-        """Rscript {params.script} {wildcards.sample} {input[0]} {params.outdir}"""
+        """Rscript {params.script} {wildcards.sample} {input[0]} {params.min_nCount_RNA} {params.max_nFeature_negprobes} {params.outdir}"""
+
+rule ST_normalize_scale_umap:
+    """Normalize, scale, and perform UMAP for one {sample}."""
+    input:
+        output_path + "/qc/{sample}/A_1_pre_QC_and_filtered_sample.rds"
+    params:
+        features = config['umap_features'],
+        outdir = lambda wildcards, input, output: os.path.dirname(output[0]),
+        script = f"{src_path}/scripts/CosMx_UMAP.R"
+    output:
+        seurat_obj = output_path + "/umap/{sample}/{sample}_normScaledUMAP.rds",
+        umap       = output_path + "/umap/{sample}/umap.png",
+        #LEN: cool trick to generate outputs based on user defined list in config
+        feature_umaps = [
+            output_path + "/umap/{sample}/" + feat.strip() + "_umap.png"
+            for feat in config['umap_features'].split(",")
+        ]
+    shell:
+        """Rscript {params.script} {input} {params.features} {output.seurat_obj} {params.outdir}"""
 
 def ST_insitutype_inputFn(wildcards):
     sample = wildcards.sample
     atomx_path = config['samples'][sample]
     rds_path = f"{output_path}/qc/{sample}/A_1_pre_QC_sample.rds"
+    #rds_path = f"{output_path}/umap/{sample}/{sample}_normScaledUMAP.rds"
     tmp = {'atomx_path': atomx_path, 'rds_path': rds_path}
     return tmp
 
@@ -54,8 +78,6 @@ rule ST_insitutype:
     params:
         min_clusters = config['min_clusters'],
         max_clusters = config['max_clusters'],
-        min_nCount_RNA = config['min_nCount_RNA'],
-        max_nFeature_negprobes = config['max_nFeature_negprobes'],
         insitutype_profile_ref = config['insitutype_profile_ref'],
         #outdir=lambda wildcards,input,output: os.path.abspath(os.path.dirname(output[0])),
         outdir=lambda wildcards,input,output: os.path.dirname(output[0]),
@@ -77,7 +99,7 @@ rule ST_insitutype:
         output_path + "/insitutype/{sample}/12_clusters/4_1_spatial_plot.png",
         output_path + "/insitutype/{sample}/12_clusters/4_2_spatial_plot_level_1_clusters.png",
     shell:
-        """Rscript {params.script} {wildcards.sample} {input.rds_path} {input.atomx_path} {params.outdir} {params.insitutype_profile_ref} {params.min_clusters} {params.max_clusters} {params.min_nCount_RNA} {params.max_nFeature_negprobes}"""
+        """Rscript {params.script} {wildcards.sample} {input.rds_path} {input.atomx_path} {params.outdir} {params.insitutype_profile_ref} {params.min_clusters} {params.max_clusters}"""
 
 rule ST_meta:
     input:

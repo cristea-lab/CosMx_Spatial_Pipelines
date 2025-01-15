@@ -22,8 +22,8 @@ args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 1) {
   stop("Please provide one or more file paths as command-line arguments.")
 }
-if (length(args) != 9) {
-    stop("Please double check your input to make sure only 9 command-line inputs are given.")
+if (length(args) != 7) {
+    stop("Please double check your input to make sure only 7 command-line inputs are given.")
 }
 
 
@@ -54,12 +54,13 @@ print(paste("Input lower end of the num of clusters: ", min_num_cluster))
 max_num_cluster = args[7]
 print(paste("Input higher end of the num of clusters: ", max_num_cluster))
 
+#LEN: 2025-01-14 These params moved to 1_QC_preprocessing_single_sample_pipeline.R
 # User input QC metrice after viewing the plot
-min_nCount_RNA = args[8] # >=
-print(paste("Input QC metrice of min nCount RNA: ", min_nCount_RNA))
+#min_nCount_RNA = args[8] # >=
+#print(paste("Input QC metrice of min nCount RNA: ", min_nCount_RNA))
 
-max_nFeature_negprobes = args[9] # <
-print(paste("Input QC metrice of max nFeature negprobes: ", max_nFeature_negprobes))
+#max_nFeature_negprobes = args[9] # <
+#print(paste("Input QC metrice of max nFeature negprobes: ", max_nFeature_negprobes))
 
 
 ##################################################
@@ -92,17 +93,13 @@ meta_data_file_path = paste0(sample_folder_path, "/", sample_name, "_metadata_fi
 # InSituType reference profile from Nanostring 
 pancreas_nanostring_ref_file_path = insitutype_reference_sig_csv_file_path
 
-# remove cells with less than 50 counts and 1 or more negative probe detected
-seurat_obj <- subset(seurat_obj, subset = nCount_RNA >= min_nCount_RNA & nFeature_negprobes < max_nFeature_negprobes)
 
-# remove all negative and falsecode probes
-seurat_obj <- subset(seurat_obj, features = rownames(seurat_obj@assays[["Nanostring"]])[!grepl("SystemControl|Negative", rownames(seurat_obj@assays[["Nanostring"]]))])
-
+#LEN: 2025-01-14 Normalization now handled by UMAP script which is upstream from this
 #normalize data
-seurat_obj_norm <- NormalizeData(seurat_obj)
-seurat_obj_norm <- JoinLayers(seurat_obj_norm)
+#seurat_obj_norm <- NormalizeData(seurat_obj)
+#seurat_obj_norm <- JoinLayers(seurat_obj_norm)
 
-saveRDS(seurat_obj_norm, post_QC_and_normalization_20_counts_per_cell_rds_file_path)
+#saveRDS(seurat_obj_norm, post_QC_and_normalization_20_counts_per_cell_rds_file_path)
 
 
 ####################################################

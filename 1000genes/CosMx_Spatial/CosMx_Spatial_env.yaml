@@ -34,3 +34,6 @@ dependencies:
 - jinja2
 - matplotlib
 - multiqc
+
+#misc.
+- jupyter

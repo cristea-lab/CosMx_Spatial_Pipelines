@@ -17,8 +17,8 @@ if (length(args) < 1) {
   stop("Please provide one or more file paths as command-line arguments.")
 }
 
-if (length(args) != 3) {
-    stop("Please double check your input to make sure only 3 command-line inputs are given.")
+if (length(args) != 5) {
+    stop("Please double check your input to make sure only 5 command-line inputs are given.")
 }
 
 ##################################################
@@ -32,7 +32,10 @@ print(paste("Input sample name: ", sample_name))
 sample_folder_path = args[2]
 print(paste("Input sample folder path from AtoMx: ", sample_folder_path))
 
-output_folder_path = args[3]
+min_nCount_RNA = args[3]
+max_nFeature_negprobes = args[4]
+
+output_folder_path = args[5]
 print(paste("Input output folder: ", output_folder_path))
 
 ##################################################
@@ -40,7 +43,7 @@ print(paste("Input output folder: ", output_folder_path))
 ##################################################
 meta_data_file_path = paste0(sample_folder_path, "/", sample_name, "_metadata_file.csv")
 
-output_Rds_file_path = paste0(output_folder_path, "/A_1_pre_QC_sample.rds")
+output_Rds_file_path = paste0(output_folder_path, "/A_1_pre_QC_and_filtered_sample.rds")
 
 # QC
 probe_count_histogram_file_path = paste0(output_folder_path, "/1_1_QC_probe_count_histogram.png")
@@ -96,6 +99,13 @@ seurat_obj = edit_fov_column(seurat_obj)
 
 # Add column for the corresponding tissue name
 seurat_obj@meta.data$patient = sample_name
+
+#LEN: 2025-01-14- moving this cell QC filtering from 2_insitutype_single_sample_processing_pipeline.R to here
+# remove cells with less than 50 counts and 1 or more negative probe detected
+seurat_obj <- subset(seurat_obj, subset = nCount_RNA >= min_nCount_RNA & nFeature_negprobes < max_nFeature_negprobes)
+
+# remove all negative and falsecode probes
+seurat_obj <- subset(seurat_obj, features = rownames(seurat_obj@assays[["Nanostring"]])[!grepl("SystemControl|Negative", rownames(seurat_obj@assays[["Nanostring"]]))])
 
 saveRDS(seurat_obj, output_Rds_file_path)
 

@@ -3,6 +3,9 @@ max_clusters: 14
 min_nCount_RNA: 20
 max_nFeature_negprobes: 0.5
 
+#UMAP features to plot
+umap_features: INS,Max.PanCK,Max.CD45,Max.CD68_CK8_18
+
 src_path: "CosMx_Spatial"
 output_path: "analysis"
 
