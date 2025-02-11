@@ -11,7 +11,9 @@ def targets(wildcards):
     for sample in config['samples']:
         ls.append(f"{output_path}/qc/{sample}/A_1_pre_QC_and_filtered_sample.rds")
         ls.append(f"{output_path}/umap/{sample}/{sample}_normScaledUMAP.rds")
-        ls.append(f"{output_path}/insitutype/{sample}/A_2_post_QC_and_normalization_20_counts_per_cell.rds")
+	
+        #ls.append(f"{output_path}/insitutype/{sample}/A_2_post_QC_and_normalization_20_counts_per_cell.rds")	
+        ls.append(f"{output_path}/insitutype/{sample}/12_clusters/B_2_semi_sup_insitutype_fully_labeled.rds")
         ls.append(f"{output_path}/metrics/{sample}/metrics_summary.csv")
         ls.append(f"{output_path}/polarity/{sample}/4_1_plot_correlation_AUCell_scores.jpeg")
 
@@ -67,8 +69,8 @@ rule ST_normalize_scale_umap:
 def ST_insitutype_inputFn(wildcards):
     sample = wildcards.sample
     atomx_path = config['samples'][sample]
-    rds_path = f"{output_path}/qc/{sample}/A_1_pre_QC_sample.rds"
-    #rds_path = f"{output_path}/umap/{sample}/{sample}_normScaledUMAP.rds"
+    #rds_path = f"{output_path}/qc/{sample}/A_1_pre_QC_sample.rds"
+    rds_path = f"{output_path}/umap/{sample}/{sample}_normScaledUMAP.rds"
     tmp = {'atomx_path': atomx_path, 'rds_path': rds_path}
     return tmp
 
@@ -80,10 +82,10 @@ rule ST_insitutype:
         max_clusters = config['max_clusters'],
         insitutype_profile_ref = config['insitutype_profile_ref'],
         #outdir=lambda wildcards,input,output: os.path.abspath(os.path.dirname(output[0])),
-        outdir=lambda wildcards,input,output: os.path.dirname(output[0]),
+        outdir=lambda wildcards: f"{output_path}/insitutype/{wildcards.sample}/",
         script=f"{src_path}/scripts/2_insitutype_single_sample_processing_pipeline.R",
     output:
-        output_path + "/insitutype/{sample}/A_2_post_QC_and_normalization_20_counts_per_cell.rds",
+        #output_path + "/insitutype/{sample}/A_2_post_QC_and_normalization_20_counts_per_cell.rds",
         #LEN: Try remove hardcoded cluster number
         #HYP: it's inefficient but the script should just take one cluster num
         #as input and generate one instead of multiple clusters

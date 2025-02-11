@@ -69,7 +69,8 @@ print(paste("Input higher end of the num of clusters: ", max_num_cluster))
 
 #output_Rds_file_path = paste0(output_folder_path, "/A_1_pre_QC_sample.rds")
 
-post_QC_and_normalization_20_counts_per_cell_rds_file_path = paste0(output_folder_path, "/A_2_post_QC_and_normalization_20_counts_per_cell.rds")
+#LEN: 2025-02-10 DEPRECATED
+#post_QC_and_normalization_20_counts_per_cell_rds_file_path = paste0(output_folder_path, "/A_2_post_QC_and_normalization_20_counts_per_cell.rds")
 
 
 
@@ -83,7 +84,7 @@ post_QC_and_normalization_20_counts_per_cell_rds_file_path = paste0(output_folde
 
 #################### LOAD SAMPLE ####################
 #seurat_obj = readRDS(output_Rds_file_path)
-seurat_obj = readRDS(sample_rds_path)
+seurat_obj_norm = readRDS(sample_rds_path)
 
 #######################################################
 #################### PREPROCESSING ####################
