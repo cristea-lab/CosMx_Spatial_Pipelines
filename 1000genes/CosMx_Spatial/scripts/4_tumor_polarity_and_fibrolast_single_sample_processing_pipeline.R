@@ -1,5 +1,5 @@
 library("AUCell")
-library("CellChat")
+#library("CellChat")
 library("Seurat")
 library("sceasy")
 library("reticulate")
