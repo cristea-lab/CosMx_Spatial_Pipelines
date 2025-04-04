@@ -43,7 +43,7 @@ rule ST_QC:
         output_path + "/qc/{sample}/A_1_pre_QC_and_filtered_sample.rds",
         output_path + "/qc/{sample}/1_1_QC_probe_count_histogram.png",
         output_path + "/qc/{sample}/1_2_QC_feature_count_histogram.png",
-        output_path + "/qc/{sample}/1_3_QC_negative_probe_count_histogram.png",
+        output_path + "/qc/{sample}/1_3_QC_negative_probe_proportion_histogram.png",
     shell:
         """Rscript {params.script} {wildcards.sample} {input[0]} {params.min_nCount_RNA} {params.max_nFeature_negprobes} {params.outdir}"""
 
