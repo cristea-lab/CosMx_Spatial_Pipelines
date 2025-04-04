@@ -209,7 +209,7 @@ ggplot(seurat_obj@meta.data, aes(x=Area, y = ..count..)) +
 ggsave(cell_area_histogram_file_path)
 
 #plot FOV signal loss plot
-FOVSignalLossSpatialPlot(res, outdir = output_folder_path, shownames = TRUE)
-FOVEffectsSpatialPlots(res = res, outdir = output_folder_path, bits = "all")
+FOVSignalLossSpatialPlot(res, outdir = output_folder_path, shownames = TRUE, plotwidth=6, plotheight=5)
+FOVEffectsSpatialPlots(res = res, outdir = output_folder_path, bits = "all", plotwidth=6, plotheight=5)
 
 
