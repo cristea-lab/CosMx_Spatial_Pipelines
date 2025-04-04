@@ -72,7 +72,7 @@ rule report_feature_count:
 rule report_neg_probe_count:
     """Generate the feature count histogram for the report"""
     input:
-        output_path + "/qc/{sample}/1_3_QC_negative_probe_count_histogram.png"
+        output_path + "/qc/{sample}/1_3_QC_negative_probe_proportion_histogram.png"
     output:
         png= output_path + "/report/{sample}/03_QC_neg_probe_count.png",
         details=output_path + "/report/{sample}/03_details.yaml",
