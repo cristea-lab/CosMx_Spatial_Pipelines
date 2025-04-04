@@ -133,7 +133,8 @@ Details will be provided upon completion of the script development.
 
 ## Authors and Contributors
 
-- **Xi (Sam) Wang, SM**: Author and computational biologist at the Department of Data Science, Dana-Farber Cancer Institute, supervised by Dr. Simona Cristea, PhD.  
+- **Xi (Sam) Wang, SM**: Author and computational biologist at the Department of Data Science, Dana-Farber Cancer Institute, supervised by Dr. Simona Cristea, PhD.
+- **Len Taing: Maintainer and scientific programmer from the Center for Functional Cancer Epigenetics, at Dana-Farber Cancer Institute.
 - **Dr. Alexander Jordan, MD**: Contributor from the lab of Dr. Jonathan Nowak, MD, PhD, at Dana-Farber Cancer Institute.
 - **Dr. Simona Cristea, PhD**: Contributor and supervisor, Department of Data Science, Dana-Farber Cancer Institute.
 - **Sudheshna Bodapati**: Previous member whose work contributed to the development of these pipelines.
