@@ -28,6 +28,15 @@ plotUMAP <- function(seurat_obj_norm, features, umap_plot_dir) {
 
    #Idents(seurat_obj_norm) <- "level_4_clusters" #identities should be set to the highest level of cluster annotation
 
+   #LEN: BUG: we're not seeing clusters in the UMAP png
+   #CAUSE: clustering happens downstream of this file!
+   #HACK: for now we'll do seurat clustering here
+   #NOTE: these clusters will not persist! b/c plotUMAP is called AFTER the
+   #seurat obj is saved to file!
+   #NOTE: resolution and dims are fixed!!!
+   seurat_obj_norm <- FindNeighbors(seurat_obj_norm, reduction="pca", dims=1:50)
+   seurat_obj_norm <- FindClusters(seurat_obj_norm, resolution=0.3)
+
    DimPlot(seurat_obj_norm, reduction = "umap") #first, a plot of the umap with the cluster annotations overlaid upon it should be generated
    png_path <- paste0(umap_plot_dir, "/umap.png")
    ggsave(png_path, width=10, height=8)

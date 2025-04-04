@@ -209,7 +209,7 @@ for (num_cluster in min_num_cluster:max_num_cluster) {
     # merges = c("Fibroblast" = "iCAF", "i" = "myCAF"),
     # subclustering via refineClusters is not recommended for semi-supervised
     # results
-    to_delete = c("T.cell.CD4"),
+    #to_delete = c("T.cell.CD4"),
     subcluster = NULL,
     counts = counts,
     neg = neg_count_vector
