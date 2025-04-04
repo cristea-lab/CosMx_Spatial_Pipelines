@@ -5,8 +5,19 @@ library(ggplot2)
 
 #Runs normalization - umap cmds returns normalized/scaled/umapped object
 runUMAP <- function(seurat_obj_QC_filtered) {
-   seurat_obj_norm <- NormalizeData(seurat_obj_QC_filtered)
-   seurat_obj_norm <- JoinLayers(seurat_obj_norm)
+   seurat_obj_norm <- JoinLayers(seurat_obj_QC_filtered)
+   #normalize to total counts per cell, scaled by mean total counts across entire dataset
+   counts <- LayerData(seurat_obj_norm, layer = "counts") %>%
+     as.matrix() %>%
+     t()
+   totalCounts <- Matrix::rowSums(counts)
+   meanCounts <- mean(totalCounts)
+   normalizedCounts <- sweep(counts, 1, pmax(totalCounts, 20), "/") * meanCounts
+   normalizedCounts <- t(normalizedCounts)
+   #log-normalize data and store it
+   logNormalizedCounts <- log1p(normalizedCounts)
+   LayerData(seurat_obj_norm, assay = "Nanostring", layer = "data") <- logNormalizedCounts
+   #run scale data
    seurat_obj_norm <- ScaleData(seurat_obj_norm, features = Features(seurat_obj_norm))
    seurat_obj_norm <- RunPCA(seurat_obj_norm, features = Features(seurat_obj_norm), seed.use = 1)
    seurat_obj_norm <- RunUMAP(object = seurat_obj_norm, dims = 1:50, spread = 2, min.dist = 0.05)
