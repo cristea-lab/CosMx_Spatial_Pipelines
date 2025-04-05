@@ -1,5 +1,7 @@
 library(Seurat)
 library(ggplot2)
+library(dplyr)
+
 #script to run UMAP analysis after initial filtering (should come right after normalization)
 #input - QC'ed seurat object (after low-count cells, negative probes, and background probes have been removed)
 
