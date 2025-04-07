@@ -9,6 +9,9 @@ src_path = config.get("src_path", "CosMx_Spatial").rstrip("/")
 def targets(wildcards):
     ls = []
     for sample in config['samples']:
+        ls.append(f"{output_path}/qc/{sample}/{sample}_GenesPerCell.png")
+        ls.append(f"{output_path}/qc/{sample}/{sample}_GenesPerCell_tissue.png")
+        
         ls.append(f"{output_path}/qc/{sample}/A_1_pre_QC_and_filtered_sample.rds")
         ls.append(f"{output_path}/umap/{sample}/{sample}_normScaledUMAP.rds")
 	
@@ -30,6 +33,18 @@ def getAtoMx_path(wildcards):
     atomx_path = config['samples'][sample]
     return atomx_path
 
+rule ST_QC_genesPerCell:
+    """given a cosmx dataset path, generates genes per cells plots pre-QC filter"""
+    input:
+        getAtoMx_path
+    params:
+        script=f"{src_path}/scripts/plotGenesPerCell.R"
+    output:
+        hist = output_path + "/qc/{sample}/{sample}_GenesPerCell.png",
+        tiss = output_path + "/qc/{sample}/{sample}_GenesPerCell_tissue.png"
+    shell:
+        """Rscript {params.script} {input[0]} {output.hist} {output.tiss}"""
+        
 rule ST_QC:
     input:
         getAtoMx_path

@@ -72,3 +72,10 @@ div.dataTables_length {
 div.dtsp-searchPane div.dataTables_scrollBody {
   height: 130px !important;
 }
+
+#wesImageModal_img {
+    max-width: 100%;
+    max-height: 80vh; /* Adjust this value as needed */
+    margin: 0 auto; /* Center the image */
+    display: block; /* Ensure the image behaves like a block element */
+}
