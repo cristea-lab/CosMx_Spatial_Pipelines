@@ -145,7 +145,8 @@ updatedprofiles <- updateReferenceProfiles(reference_profiles = pancreas_nanostr
 
 
 #create cell cohorts based on mIF data
-mif_data <- seurat_obj_norm@meta.data[,c("Mean.PanCK","Mean.CD45","Mean.CD68_CK8_18")] %>% as.matrix()
+#mif_data <- seurat_obj_norm@meta.data[,c("Mean.PanCK","Mean.CD45","Mean.CD68_CK8_18")] %>% as.matrix()
+mif_data <- seurat_obj_norm@meta.data[,c("Mean.PanCK","Mean.CD45")] %>% as.matrix()
 mif_cohort <- fastCohorting(mif_data, gaussian_transform = TRUE)
 
 
@@ -303,7 +304,8 @@ for (num_cluster in min_num_cluster:max_num_cluster) {
 
   #review mIF staining for each cluster
   #create violin plot of marker scores stratified by collapsed cell type
-  VlnPlot(seurat_obj_norm, group.by = "level_2_clusters", features = c("Mean.PanCK", "Mean.CD45", "Mean.CD68_CK8_18"), ncol = 2, pt.size = 0, y.max = 10000)
+  #VlnPlot(seurat_obj_norm, group.by = "level_2_clusters", features = c("Mean.PanCK", "Mean.CD45", "Mean.CD68_CK8_18"), ncol = 2, pt.size = 0, y.max = 10000)
+  VlnPlot(seurat_obj_norm, group.by = "level_2_clusters", features = c("Mean.PanCK", "Mean.CD45"), ncol = 2, pt.size = 0, y.max = 10000)
   ggsave(violin_plot_marker_scores_1_file_path)
 
   #create violin plot of marker scores stratified by collapsed cell type
