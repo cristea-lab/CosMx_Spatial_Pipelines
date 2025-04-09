@@ -14,6 +14,7 @@ def targets(wildcards):
         
         ls.append(f"{output_path}/qc/{sample}/A_1_pre_QC_and_filtered_sample.rds")
         ls.append(f"{output_path}/umap/{sample}/{sample}_normScaledUMAP.rds")
+	ls.append(f"{output_path}/umap/{sample}/{sample}_normScaledUMAP.md5")
 	
         #ls.append(f"{output_path}/insitutype/{sample}/A_2_post_QC_and_normalization_20_counts_per_cell.rds")	
         ls.append(f"{output_path}/insitutype/{sample}/12_clusters/B_2_semi_sup_insitutype_fully_labeled.rds")
@@ -151,5 +152,13 @@ rule ST_polarity:
        output_path + "/polarity/{sample}/plots/{sample}_Fibroblast_Subtype_Frequency.png",
     shell:
         """Rscript {params.script} {wildcards.sample} {input} {params.polarity_genesets} {params.outdir}"""
+
+rule ST_createMD5:
+    input:
+        "{filepath}.rds"
+    output:
+        "{filepath}.md5"
+    shell:
+        "md5sum {input} > {output}"
 
 include: "./modules/report.snakefile"
