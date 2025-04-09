@@ -14,7 +14,7 @@ def targets(wildcards):
         
         ls.append(f"{output_path}/qc/{sample}/A_1_pre_QC_and_filtered_sample.rds")
         ls.append(f"{output_path}/umap/{sample}/{sample}_normScaledUMAP.rds")
-	ls.append(f"{output_path}/umap/{sample}/{sample}_normScaledUMAP.md5")
+        ls.append(f"{output_path}/umap/{sample}/{sample}_normScaledUMAP.md5")
 	
         #ls.append(f"{output_path}/insitutype/{sample}/A_2_post_QC_and_normalization_20_counts_per_cell.rds")	
         ls.append(f"{output_path}/insitutype/{sample}/12_clusters/B_2_semi_sup_insitutype_fully_labeled.rds")
