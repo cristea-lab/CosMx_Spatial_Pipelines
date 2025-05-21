@@ -6,13 +6,13 @@ max_nFeature_negprobes: 0.5
 #UMAP features to plot
 umap_features: INS,KRT8,KRT17,LYZ,S100A6
 
-src_path: "CosMx_Spatial"
+src_path: "CosMx_Spatial_Pipelines"
 output_path: "analysis"
 
-insitutype_profile_ref: /cristealab/ajordan/projects/BTC_analysis/data/external/insitutype_references/Pancreas.profiles.csv
+insitutype_profile_ref: /cristealab/lentaing/cosmx1k/refs/cosmx1k_refs_20250116_ver1.00/Pancreas.profiles.csv
 
-polarity_genesets: /cristealab/ajordan/projects/BTC_analysis/data/external/gene_sets/basal_classical_and_fibroblast_gene_sets.csv
+polarity_genesets: /cristealab/lentaing/cosmx1k/refs/cosmx1k_refs_20250116_ver1.00/basal_classical_and_fibroblast_gene_sets.csv
 
 samples:
-  PCA429:
-    - /cristealab/ajordan/projects/BTC_analysis/data/processed/cosmx/human/resegmented_data/PCA429
+  RMC01_0230643_T1_2_L15:
+    - /cristealab/lentaing/data/20250408_runBatch/RMC01_0230643_T1_2_L15
