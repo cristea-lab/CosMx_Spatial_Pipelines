@@ -356,10 +356,13 @@ metrics$fraction.tumor.prolif <- NA  # Not provided in the tables
 metrics$fraction.fibroblast.mycaf <- level_2_table_fibroblasts %>% filter(Cell_Type == "myCAF") %>% pull(Fraction)
 metrics$fraction.fibroblast.icaf <- level_2_table_fibroblasts %>% filter(Cell_Type == "iCAF") %>% pull(Fraction)
 
+#LEN: 2025-05-22 BUG Fix: ensure that all elements in metrics are scalar
+metrics_clean <- metrics[lengths(metrics) == 1]
+
 # Convert the list to a data frame
 metrics_df <- data.frame(
-  Metric = names(metrics),
-  Value = unlist(metrics)
+  Metric = names(metrics_clean),
+  Value = unlist(metrics_clean)
 )
 
 # # Write the data frame to a CSV file
