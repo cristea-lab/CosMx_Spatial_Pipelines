@@ -1,5 +1,5 @@
 min_clusters: 12
-max_clusters: 14
+max_clusters: 12
 min_nCount_RNA: 20
 max_nFeature_negprobes: 0.5
 
@@ -10,7 +10,6 @@ src_path: "CosMx_Spatial_Pipelines"
 output_path: "analysis"
 
 insitutype_profile_ref: /cristealab/lentaing/cosmx1k/refs/cosmx1k_refs_20250116_ver1.00/Pancreas.profiles.csv
-
 polarity_genesets: /cristealab/lentaing/cosmx1k/refs/cosmx1k_refs_20250116_ver1.00/basal_classical_and_fibroblast_gene_sets.csv
 
 samples:
