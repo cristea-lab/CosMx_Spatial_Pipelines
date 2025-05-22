@@ -43,6 +43,11 @@ print(paste("Input output folder: ", output_folder_path))
 ##################################################
 meta_data_file_path = paste0(sample_folder_path, "/", sample_name, "_metadata_file.csv")
 
+#LEN: 2025-05-21 ADD check in case the metafile is .csv.gz
+if (!file.exists(meta_data_file_path)) {
+  meta_data_file_path = paste0(meta_data_file_path, ".gz")
+}
+
 output_Rds_file_path = paste0(output_folder_path, "/A_1_pre_QC_and_filtered_sample.rds")
 
 # QC

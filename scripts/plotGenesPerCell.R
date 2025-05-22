@@ -14,6 +14,11 @@ loadCosMx <- function(data_path) {
   sample_name <- basename(data_path)
   #NOTE: LoadNanostring does NOT read in all of the metadata so we have to do this
   meta_data_file_path = paste0(data_path, "/", sample_name, "_metadata_file.csv")
+  #LEN: 2025-05-21 ADD check in case the metafile is .csv.gz
+  if (!file.exists(meta_data_file_path)) {
+    meta_data_file_path = paste0(meta_data_file_path, ".gz")
+  }
+
   metadata <- read.csv(meta_data_file_path, header = TRUE)
   original_metadata <- seurat_obj@meta.data
   metadata <- cbind(original_metadata, metadata)
